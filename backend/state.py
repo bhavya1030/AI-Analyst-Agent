@@ -8,3 +8,4 @@ class AnalystState(TypedDict):
     insights: list
     question: Optional[str]
     answer: Optional[str]
+    chart: Optional[str]
