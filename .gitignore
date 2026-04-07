@@ -241,3 +241,4 @@ venv/
 # OS files
 .DS_Store
 Thumbs.db
+data/employees_files/
