@@ -4,6 +4,10 @@ load_dotenv()
 from fastapi import FastAPI
 from backend.graph.workflow import build_graph
 
+from fastapi import UploadFile, File
+import shutil
+import os
+
 app = FastAPI()
 
 graph = build_graph()
@@ -40,7 +44,7 @@ def analyze():
     }
 
 @app.get("/ask")
-def ask(question: str):
+def ask(question: str, file_path: str = "data/sample.csv"):
 
     state = {
         "data": None,
@@ -49,15 +53,28 @@ def ask(question: str):
         "question": question,
         "answer": None,
         "chart": None,
+        "plan": [],
+        "file_path": file_path,
     }
 
     result = graph.invoke(state)
 
-    if result.get("chart"):
-        fig = pio.from_json(result["chart"])
-        return HTMLResponse(fig.to_html(full_html=True))
-
     return {
         "question": question,
         "answer": result.get("answer"),
+        "chart": result.get("chart"),
+        "insights": result.get("insights"),
+    }
+
+@app.post("/upload")
+def upload_dataset(file: UploadFile = File(...)):
+
+    upload_path = f"data/{file.filename}"
+
+    with open(upload_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    return {
+        "message": "Dataset uploaded successfully",
+        "file_path": upload_path
     }

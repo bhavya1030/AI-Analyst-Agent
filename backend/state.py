@@ -9,3 +9,5 @@ class AnalystState(TypedDict):
     question: Optional[str]
     answer: Optional[str]
     chart: Optional[str]
+    plan: list
+    file_path: Optional[str]
