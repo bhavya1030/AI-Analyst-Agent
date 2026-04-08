@@ -20,20 +20,36 @@ def clean_for_json(obj):
 
 
 def eda_agent(state):
-    df = state["data"]
 
-    summary = {
-        "rows": df.shape[0],
-        "columns": list(df.columns),
-        "missing_values": df.isnull().sum().to_dict(),
-        "describe": df.describe(include="all").to_dict(),
-    }
+    df = state.get("data")
 
-    summary = clean_for_json(summary)
+    # SAFETY CHECK: dataset missing
+    if df is None:
+        state.setdefault("insights", [])
+        state["insights"].append({
+            "error": "No dataset available for EDA."
+        })
+        return state
 
-    if "insights" not in state or state["insights"] is None:
-        state["insights"] = []
+    try:
 
-    state["insights"].append(summary)
+        summary = {
+            "rows": df.shape[0],
+            "columns": list(df.columns),
+            "missing_values": df.isnull().sum().to_dict(),
+            "describe": df.describe(include="all").to_dict(),
+        }
+
+        summary = clean_for_json(summary)
+
+        state.setdefault("insights", [])
+        state["insights"].append(summary)
+
+    except Exception as e:
+
+        state.setdefault("insights", [])
+        state["insights"].append({
+            "error": f"EDA failed: {str(e)}"
+        })
 
     return state
