@@ -1,56 +1,90 @@
 from langgraph.graph import StateGraph, END
 
-from backend.state import AnalystState
-
 from backend.agents.planner_agent import planner_agent
 from backend.agents.data_agent import data_agent
+from backend.agents.data_engineer_agent import data_engineer_agent
 from backend.agents.cleaning_agent import cleaning_agent
 from backend.agents.eda_agent import eda_agent
-from backend.agents.qa_agent import qa_agent
 from backend.agents.viz_agent import viz_agent
+from backend.agents.qa_agent import qa_agent
 from backend.agents.insight_agent import insight_agent
+
+
+from langgraph.graph import END
+
+
+def router(state):
+
+    # Persist dataset across steps
+    if state.get("data") is not None:
+        state["last_dataset"] = state["data"]
+
+    # Restore dataset if missing
+    if state.get("data") is None and state.get("last_dataset") is not None:
+        state["data"] = state["last_dataset"]
+
+    plan = state.get("plan", [])
+
+    if not plan:
+        return END
+
+    return plan.pop(0)
 
 
 def build_graph():
 
-    graph = StateGraph(AnalystState)
+    builder = StateGraph(dict)
 
-    # Register nodes
-    graph.add_node("planner", planner_agent)
-    graph.add_node("load_data", data_agent)
-    graph.add_node("clean_data", cleaning_agent)
-    graph.add_node("run_eda", eda_agent)
-    graph.add_node("run_qa", qa_agent)
-    graph.add_node("run_viz", viz_agent)
-    graph.add_node("generate_insight", insight_agent)
+    # Nodes
+    builder.add_node("planner", planner_agent)
+    builder.add_node("load_data", data_agent)
+    builder.add_node("fetch_data", data_engineer_agent)
+    builder.add_node("clean_data", cleaning_agent)
+    builder.add_node("run_eda", eda_agent)
+    builder.add_node("run_viz", viz_agent)
+    builder.add_node("run_qa", qa_agent)
+    builder.add_node("generate_insight", insight_agent)
 
     # Entry point
-    graph.set_entry_point("planner")
+    builder.set_entry_point("planner")
 
-    # Planner decides execution order
-    def route(state):
-        return state["plan"][0]
-
-    graph.add_conditional_edges(
+    # Dynamic routing
+    builder.add_conditional_edges(
         "planner",
-        route,
+        router,
         {
             "load_data": "load_data",
-            "clean_data": "clean_data",
+            "fetch_data": "fetch_data",
+            "run_viz": "run_viz",
             "run_eda": "run_eda",
             "run_qa": "run_qa",
-            "run_viz": "run_viz",
         },
     )
 
-    # Continue execution chain automatically
-    graph.add_edge("load_data", "run_eda")
-    graph.add_edge("clean_data", "run_eda")
+    builder.add_conditional_edges(
+        "load_data",
+        router,
+        {
+            "run_eda": "run_eda",
+            "run_viz": "run_viz",
+            "run_qa": "run_qa",
+        },
+    )
 
-    graph.add_edge("run_eda", "generate_insight")
-    graph.add_edge("generate_insight", END)
+    builder.add_conditional_edges(
+        "fetch_data",
+        router,
+        {
+            "run_eda": "run_eda",
+            "run_viz": "run_viz",
+            "run_qa": "run_qa",
+        },
+    )
 
-    graph.add_edge("run_viz", END)
-    graph.add_edge("run_qa", END)
+    builder.add_edge("run_eda", "generate_insight")
+    builder.add_edge("run_viz", "generate_insight")
+    builder.add_edge("run_qa", "generate_insight")
 
-    return graph.compile()
+    builder.add_edge("generate_insight", END)
+
+    return builder.compile()
