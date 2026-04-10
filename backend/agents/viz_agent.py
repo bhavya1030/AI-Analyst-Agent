@@ -1,11 +1,58 @@
+from rapidfuzz import process
 import plotly.express as px
 import plotly.figure_factory as ff
+
+
+def best_column_match(text, columns, last_column=None):
+
+    if not columns:
+        return None
+
+    match = process.extractOne(text, columns)
+
+    if match and match[1] > 55:
+        return match[0]
+
+    # fallback to last remembered column
+    if last_column in columns:
+        return last_column
+
+    return None
+
+
+def extract_vs_columns(question, columns, last_columns=None):
+
+    if "vs" not in question:
+        return None, None
+
+    parts = question.split("vs")
+
+    if len(parts) != 2:
+        return None, None
+
+    left = parts[0].strip()
+    right = parts[1].strip()
+
+    col_x = best_column_match(left, columns)
+    col_y = best_column_match(right, columns)
+
+    # fallback to memory if needed
+    if not col_x and last_columns:
+        col_x = last_columns[0]
+
+    if not col_y and last_columns and len(last_columns) > 1:
+        col_y = last_columns[1]
+
+    return col_x, col_y
 
 
 def viz_agent(state):
 
     df = state.get("data")
     question = state.get("question", "").lower()
+
+    last_column = state.get("last_column_used")
+    last_columns = state.get("last_columns_used")
 
     if df is None:
         state["chart"] = None
@@ -24,40 +71,117 @@ def viz_agent(state):
     fig = None
     used_cols = []
 
-    # TREND / LINE PLOT (time-series detection)
-    if "trend" in question or "line" in question:
+    # --------------------------------------------------
+    # X vs Y DETECTION (SCATTER)
+    # --------------------------------------------------
 
-        if time_cols and numeric_cols:
+    x_col, y_col = extract_vs_columns(
+        question,
+        numeric_cols,
+        last_columns
+    )
 
-            x_col = time_cols[0]
-            y_col = numeric_cols[0]
+    if x_col and y_col:
 
-            fig = px.line(df, x=x_col, y=y_col)
+        fig = px.scatter(df, x=x_col, y=y_col)
 
-            used_cols = [x_col, y_col]
+        used_cols = [x_col, y_col]
 
-    # SCATTER
-    elif "scatter" in question or "vs" in question:
+        state["last_columns_used"] = used_cols
+        state["last_column_used"] = y_col
 
-        if len(numeric_cols) >= 2:
 
-            x_col = numeric_cols[0]
-            y_col = numeric_cols[1]
+    # --------------------------------------------------
+    # TREND / TIME SERIES
+    # --------------------------------------------------
 
-            fig = px.scatter(df, x=x_col, y=y_col)
+    elif "trend" in question or "line" in question:
 
-            used_cols = [x_col, y_col]
+        y_col = best_column_match(
+            question,
+            numeric_cols,
+            last_column
+        )
 
-    # HISTOGRAM
-    elif "distribution" in question:
+        if not y_col and last_columns:
+            y_col = last_columns[-1]
 
-        if numeric_cols:
+        if time_cols and y_col:
 
-            fig = px.histogram(df, x=numeric_cols[0])
+            fig = px.line(df, x=time_cols[0], y=y_col)
 
-            used_cols = [numeric_cols[0]]
+            used_cols = [time_cols[0], y_col]
 
+            state["last_column_used"] = y_col
+
+
+    # --------------------------------------------------
+    # DISTRIBUTION
+    # --------------------------------------------------
+
+    elif "distribution" in question or "histogram" in question:
+
+        col = best_column_match(
+            question,
+            numeric_cols,
+            last_column
+        )
+
+        if col:
+
+            fig = px.histogram(df, x=col)
+
+            used_cols = [col]
+
+            state["last_column_used"] = col
+
+
+    # --------------------------------------------------
+    # BAR CHART
+    # --------------------------------------------------
+
+    elif "bar" in question:
+
+        col = best_column_match(
+            question,
+            numeric_cols,
+            last_column
+        )
+
+        if col:
+
+            fig = px.bar(df, y=col)
+
+            used_cols = [col]
+
+            state["last_column_used"] = col
+
+
+    # --------------------------------------------------
+    # BOX PLOT
+    # --------------------------------------------------
+
+    elif "box" in question:
+
+        col = best_column_match(
+            question,
+            numeric_cols,
+            last_column
+        )
+
+        if col:
+
+            fig = px.box(df, y=col)
+
+            used_cols = [col]
+
+            state["last_column_used"] = col
+
+
+    # --------------------------------------------------
     # CORRELATION HEATMAP
+    # --------------------------------------------------
+
     elif "correlation" in question or "heatmap" in question:
 
         if len(numeric_cols) >= 2:
@@ -73,14 +197,36 @@ def viz_agent(state):
 
             used_cols = numeric_cols
 
-    # DEFAULT TREND FALLBACK
+            state["last_columns_used"] = numeric_cols
+
+
+    # --------------------------------------------------
+    # DEFAULT FALLBACK TREND
+    # --------------------------------------------------
+
     else:
 
-        if time_cols and numeric_cols:
+        fallback_col = best_column_match(
+            question,
+            numeric_cols,
+            last_column
+        )
 
-            fig = px.line(df, x=time_cols[0], y=numeric_cols[0])
+        if not fallback_col and last_columns:
+            fallback_col = last_columns[-1]
 
-            used_cols = [time_cols[0], numeric_cols[0]]
+        if time_cols and fallback_col:
+
+            fig = px.line(df, x=time_cols[0], y=fallback_col)
+
+            used_cols = [time_cols[0], fallback_col]
+
+            state["last_column_used"] = fallback_col
+
+
+    # --------------------------------------------------
+    # FINALIZE OUTPUT
+    # --------------------------------------------------
 
     if fig:
 

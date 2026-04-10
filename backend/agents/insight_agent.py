@@ -1,5 +1,9 @@
 def insight_agent(state):
 
+    # If QA already produced an answer, do NOT overwrite it
+    if state.get("answer") is not None:
+        return state
+
     insights = state.get("insights", [])
 
     if not insights:
@@ -8,7 +12,6 @@ def insight_agent(state):
 
     summary = insights[0]
 
-    # SAFETY CHECK: summary may not contain expected keys
     if not isinstance(summary, dict):
         state["answer"] = "Invalid dataset summary."
         return state
@@ -27,19 +30,17 @@ def insight_agent(state):
 
     text_output = []
 
-    # Dataset structure
     text_output.append(
         f"Dataset contains {rows} rows and {len(columns)} columns."
     )
 
-    # Missing values check
     if isinstance(missing, dict) and sum(missing.values()) == 0:
         text_output.append("No missing values detected.")
     else:
         text_output.append("Dataset contains missing values.")
 
-    # Numeric column insights
     if isinstance(describe, dict):
+
         for col, stats in describe.items():
 
             if isinstance(stats, dict):

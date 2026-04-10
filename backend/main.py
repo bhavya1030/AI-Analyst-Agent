@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, UploadFile, File, Query
+from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
 import shutil
 import os
@@ -13,13 +13,20 @@ app = FastAPI(title="AI Analyst Agent API")
 # Initialize LangGraph workflow
 graph = build_graph()
 
-# Global dataset memory (persists between requests)
+
+# -------------------------------
+# GLOBAL MEMORY STORAGE
+# -------------------------------
+
 LAST_DATASET = None
+LAST_COLUMN = None
+LAST_COLUMNS = None
 
 
 # -------------------------------
 # Root Endpoint
 # -------------------------------
+
 @app.get("/")
 def home():
     return {"message": "AI Analyst Backend Running 🚀"}
@@ -28,6 +35,7 @@ def home():
 # -------------------------------
 # Dataset Upload Endpoint
 # -------------------------------
+
 @app.post("/upload")
 def upload_dataset(file: UploadFile = File(...)):
 
@@ -36,6 +44,7 @@ def upload_dataset(file: UploadFile = File(...)):
     upload_path = f"data/{file.filename}"
 
     try:
+
         with open(upload_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
@@ -45,6 +54,7 @@ def upload_dataset(file: UploadFile = File(...)):
         }
 
     except Exception as e:
+
         return JSONResponse(
             status_code=500,
             content={"error": f"Upload failed: {str(e)}"}
@@ -54,6 +64,7 @@ def upload_dataset(file: UploadFile = File(...)):
 # -------------------------------
 # Automated Analysis Endpoint
 # -------------------------------
+
 @app.get("/analyze")
 def analyze():
 
@@ -61,6 +72,7 @@ def analyze():
 
     state = {
         "data": LAST_DATASET,
+        "last_dataset": LAST_DATASET,
         "cleaned": False,
         "insights": [],
         "question": None,
@@ -76,6 +88,7 @@ def analyze():
         df = result.get("data")
 
         if df is None:
+
             return JSONResponse(
                 status_code=400,
                 content={"error": "No dataset available for analysis"}
@@ -103,16 +116,19 @@ def analyze():
 # -------------------------------
 # Main AI Analyst Query Endpoint
 # -------------------------------
+
 @app.get("/ask")
-def ask(
-    question: str = Query(...),
-    file_path: str | None = Query(default=None)
-):
+def ask(question: str, file_path: str | None = None):
 
     global LAST_DATASET
+    global LAST_COLUMN
+    global LAST_COLUMNS
 
     state = {
-        "data": LAST_DATASET,  # reuse dataset from previous request
+        "data": LAST_DATASET,
+        "last_dataset": LAST_DATASET,
+        "last_column_used": LAST_COLUMN,
+        "last_columns_used": LAST_COLUMNS,
         "cleaned": False,
         "insights": [],
         "question": question,
@@ -121,7 +137,6 @@ def ask(
         "plan": []
     }
 
-    # attach file path if user uploaded dataset
     if file_path:
         state["file_path"] = file_path
 
@@ -129,9 +144,26 @@ def ask(
 
         result = graph.invoke(state)
 
-        # Save dataset for future requests
+        # -------------------------------
+        # Persist dataset memory
+        # -------------------------------
+
         if result.get("data") is not None:
             LAST_DATASET = result["data"]
+
+        # -------------------------------
+        # Persist single-column memory
+        # -------------------------------
+
+        if result.get("last_column_used") is not None:
+            LAST_COLUMN = result["last_column_used"]
+
+        # -------------------------------
+        # Persist multi-column memory
+        # -------------------------------
+
+        if result.get("last_columns_used") is not None:
+            LAST_COLUMNS = result["last_columns_used"]
 
         return {
             "question": question,
