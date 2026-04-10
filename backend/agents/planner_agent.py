@@ -39,6 +39,7 @@ def planner_agent(state):
         "median",
         "std",
         "variance",
+        "sum"
     ]
 
     dataset_requested = any(k in question for k in dataset_keywords)
@@ -47,7 +48,7 @@ def planner_agent(state):
 
     dataset_available = state.get("data") is not None
 
-    # Dataset request
+    # CASE 1: dataset requested
     if dataset_requested:
 
         plan.append("fetch_data")
@@ -65,20 +66,8 @@ def planner_agent(state):
         print("PLANNER ROUTE:", plan)
         return state
 
-    # Visualization request
-    if viz_requested:
 
-        if dataset_available:
-            plan.append("run_viz")
-        else:
-            plan.append("load_data")
-            plan.append("run_viz")
-
-        state["plan"] = plan
-        print("PLANNER ROUTE:", plan)
-        return state
-
-    # Statistics request
+    # CASE 2: stats request
     if stat_requested:
 
         if dataset_available:
@@ -91,7 +80,22 @@ def planner_agent(state):
         print("PLANNER ROUTE:", plan)
         return state
 
-    # Default
+
+    # CASE 3: visualization request
+    if viz_requested:
+
+        if dataset_available:
+            plan.append("run_viz")
+        else:
+            plan.append("load_data")
+            plan.append("run_viz")
+
+        state["plan"] = plan
+        print("PLANNER ROUTE:", plan)
+        return state
+
+
+    # DEFAULT
     if dataset_available:
         plan.append("run_eda")
     else:
