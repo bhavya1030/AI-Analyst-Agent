@@ -28,6 +28,7 @@ def planner_agent(state):
         "correlation",
         "vs",
         "trend",
+        "histogram",
     ]
 
     stat_keywords = [
@@ -48,7 +49,11 @@ def planner_agent(state):
 
     dataset_available = state.get("data") is not None
 
+
+    # -------------------------------
     # CASE 1: dataset requested
+    # -------------------------------
+
     if dataset_requested:
 
         plan.append("fetch_data")
@@ -64,45 +69,67 @@ def planner_agent(state):
 
         state["plan"] = plan
         print("PLANNER ROUTE:", plan)
+
         return state
 
 
+    # -------------------------------
     # CASE 2: stats request
+    # -------------------------------
+
     if stat_requested:
 
         if dataset_available:
-            plan.append("run_qa")
-        else:
-            plan.append("load_data")
+
             plan.append("run_qa")
 
-        state["plan"] = plan
-        print("PLANNER ROUTE:", plan)
+            state["plan"] = plan
+            print("PLANNER ROUTE:", plan)
+
+            return state
+
+        state["answer"] = "Please load or fetch a dataset first."
+        state["stop"] = True
+
         return state
 
 
+    # -------------------------------
     # CASE 3: visualization request
+    # -------------------------------
+
     if viz_requested:
 
         if dataset_available:
-            plan.append("run_viz")
-        else:
-            plan.append("load_data")
+
             plan.append("run_viz")
 
-        state["plan"] = plan
-        print("PLANNER ROUTE:", plan)
+            state["plan"] = plan
+            print("PLANNER ROUTE:", plan)
+
+            return state
+
+        state["answer"] = "Please load or fetch a dataset first."
+        state["stop"] = True
+
         return state
 
 
-    # DEFAULT
+    # -------------------------------
+    # DEFAULT CASE
+    # -------------------------------
+
     if dataset_available:
-        plan.append("run_eda")
-    else:
-        plan.append("load_data")
+
         plan.append("run_eda")
 
-    state["plan"] = plan
-    print("PLANNER ROUTE:", plan)
+        state["plan"] = plan
+        print("PLANNER ROUTE:", plan)
+
+        return state
+
+
+    state["answer"] = "Please load or fetch a dataset first."
+    state["stop"] = True
 
     return state

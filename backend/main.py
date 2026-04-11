@@ -5,22 +5,15 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
 import shutil
 import os
+import pandas as pd
 
 from backend.graph.workflow import build_graph
+from backend.db import get_session, save_session
 
 app = FastAPI(title="AI Analyst Agent API")
 
 # Initialize LangGraph workflow
 graph = build_graph()
-
-
-# -------------------------------
-# GLOBAL MEMORY STORAGE
-# -------------------------------
-
-LAST_DATASET = None
-LAST_COLUMN = None
-LAST_COLUMNS = None
 
 
 # -------------------------------
@@ -66,13 +59,24 @@ def upload_dataset(file: UploadFile = File(...)):
 # -------------------------------
 
 @app.get("/analyze")
-def analyze():
+def analyze(session_id: str = "default"):
 
-    global LAST_DATASET
+    session = get_session(session_id)
+
+    dataset = None
+
+    if session and session.dataset_path:
+        try:
+            dataset = pd.read_csv(session.dataset_path)
+            print("SESSION DATASET RELOADED:", session.dataset_path)
+        except Exception as e:
+            print("FAILED TO LOAD SESSION DATASET:", e)
 
     state = {
-        "data": LAST_DATASET,
-        "last_dataset": LAST_DATASET,
+        "data": dataset,
+        "last_dataset": dataset,
+        "last_column_used": session.last_column if session else None,
+        "last_columns_used": session.last_columns if session else None,
         "cleaned": False,
         "insights": [],
         "question": None,
@@ -88,13 +92,10 @@ def analyze():
         df = result.get("data")
 
         if df is None:
-
             return JSONResponse(
                 status_code=400,
                 content={"error": "No dataset available for analysis"}
             )
-
-        LAST_DATASET = df
 
         return {
             "rows": len(df),
@@ -118,17 +119,28 @@ def analyze():
 # -------------------------------
 
 @app.get("/ask")
-def ask(question: str, file_path: str | None = None):
+def ask(
+    question: str,
+    session_id: str = "default",
+    file_path: str | None = None
+):
 
-    global LAST_DATASET
-    global LAST_COLUMN
-    global LAST_COLUMNS
+    session = get_session(session_id)
+
+    dataset = None
+
+    if session and session.dataset_path:
+        try:
+            dataset = pd.read_csv(session.dataset_path)
+            print("SESSION DATASET RELOADED:", session.dataset_path)
+        except Exception as e:
+            print("FAILED TO LOAD SESSION DATASET:", e)
 
     state = {
-        "data": LAST_DATASET,
-        "last_dataset": LAST_DATASET,
-        "last_column_used": LAST_COLUMN,
-        "last_columns_used": LAST_COLUMNS,
+        "data": dataset,
+        "last_dataset": dataset,
+        "last_column_used": session.last_column if session else None,
+        "last_columns_used": session.last_columns if session else None,
         "cleaned": False,
         "insights": [],
         "question": question,
@@ -144,26 +156,34 @@ def ask(question: str, file_path: str | None = None):
 
         result = graph.invoke(state)
 
-        # -------------------------------
-        # Persist dataset memory
-        # -------------------------------
+        df = result.get("data")
 
-        if result.get("data") is not None:
-            LAST_DATASET = result["data"]
+        dataset_path = None
 
-        # -------------------------------
-        # Persist single-column memory
-        # -------------------------------
+        # CASE 1: uploaded dataset
+        if df is not None and file_path:
+            dataset_path = file_path
 
-        if result.get("last_column_used") is not None:
-            LAST_COLUMN = result["last_column_used"]
+        # CASE 2: fetched dataset from web
+        elif result.get("dataset_url"):
+            dataset_path = result["dataset_url"]
 
-        # -------------------------------
-        # Persist multi-column memory
-        # -------------------------------
+        dataset_path = None
 
-        if result.get("last_columns_used") is not None:
-            LAST_COLUMNS = result["last_columns_used"]
+        # uploaded dataset
+        if file_path:
+            dataset_path = file_path
+
+        # fetched dataset
+        elif result.get("dataset_url"):
+            dataset_path = result["dataset_url"]
+
+        save_session(
+            session_id=session_id,
+            dataset_path=dataset_path,
+            last_column=result.get("last_column_used"),
+            last_columns=result.get("last_columns_used"),
+        )
 
         return {
             "question": question,
