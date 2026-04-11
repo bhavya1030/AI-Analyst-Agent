@@ -8,24 +8,18 @@ from backend.agents.eda_agent import eda_agent
 from backend.agents.viz_agent import viz_agent
 from backend.agents.qa_agent import qa_agent
 from backend.agents.insight_agent import insight_agent
-from langgraph.graph import END
-from langgraph.graph import END
 
 
 def router(state):
 
-    # restore dataset memory BEFORE routing
-    if state.get("data") is None and state.get("last_dataset") is not None:
-        state["data"] = state["last_dataset"]
-
-    # persist dataset memory AFTER steps
-    if state.get("data") is not None:
-        state["last_dataset"] = state["data"]
+    # SAFE EXIT: planner blocked execution
+    if state.get("stop"):
+        return "generate_insight"
 
     plan = state.get("plan", [])
 
     if not plan:
-        return END
+        return "generate_insight"
 
     return plan.pop(0)
 
@@ -57,6 +51,7 @@ def build_graph():
             "run_viz": "run_viz",
             "run_eda": "run_eda",
             "run_qa": "run_qa",
+            "generate_insight": "generate_insight",
         },
     )
 
@@ -67,6 +62,7 @@ def build_graph():
             "run_eda": "run_eda",
             "run_viz": "run_viz",
             "run_qa": "run_qa",
+            "generate_insight": "generate_insight",
         },
     )
 
@@ -77,6 +73,7 @@ def build_graph():
             "run_eda": "run_eda",
             "run_viz": "run_viz",
             "run_qa": "run_qa",
+            "generate_insight": "generate_insight",
         },
     )
 
