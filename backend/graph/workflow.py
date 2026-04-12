@@ -8,6 +8,7 @@ from backend.agents.eda_agent import eda_agent
 from backend.agents.viz_agent import viz_agent
 from backend.agents.qa_agent import qa_agent
 from backend.agents.insight_agent import insight_agent
+from backend.agents.dataset_profile_agent import dataset_profile_agent
 
 
 def router(state):
@@ -32,12 +33,13 @@ def build_graph():
     builder.add_node("planner", planner_agent)
     builder.add_node("load_data", data_agent)
     builder.add_node("fetch_data", data_engineer_agent)
+    builder.add_node("profile_data", dataset_profile_agent)
     builder.add_node("clean_data", cleaning_agent)
     builder.add_node("run_eda", eda_agent)
     builder.add_node("run_viz", viz_agent)
     builder.add_node("run_qa", qa_agent)
     builder.add_node("generate_insight", insight_agent)
-
+    
     # Entry point
     builder.set_entry_point("planner")
 
@@ -49,7 +51,7 @@ def build_graph():
             "load_data": "load_data",
             "fetch_data": "fetch_data",
             "run_viz": "run_viz",
-            "run_eda": "run_eda",
+            "profile_data": "profile_data",
             "run_qa": "run_qa",
             "generate_insight": "generate_insight",
         },
@@ -59,6 +61,7 @@ def build_graph():
         "load_data",
         router,
         {
+            "profile_data": "profile_data",
             "run_eda": "run_eda",
             "run_viz": "run_viz",
             "run_qa": "run_qa",
@@ -70,6 +73,7 @@ def build_graph():
         "fetch_data",
         router,
         {
+            "profile_data": "profile_data",
             "run_eda": "run_eda",
             "run_viz": "run_viz",
             "run_qa": "run_qa",
@@ -77,6 +81,7 @@ def build_graph():
         },
     )
 
+    builder.add_edge("profile_data", "run_eda")
     builder.add_edge("run_eda", "generate_insight")
     builder.add_edge("run_viz", "generate_insight")
     builder.add_edge("run_qa", "generate_insight")
