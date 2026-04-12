@@ -168,7 +168,6 @@ def ask(
         elif result.get("dataset_url"):
             dataset_path = result["dataset_url"]
 
-        dataset_path = None
 
         # uploaded dataset
         if file_path:
