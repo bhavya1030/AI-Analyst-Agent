@@ -188,6 +188,7 @@ def ask(
             "question": question,
             "answer": result.get("answer"),
             "insights": result.get("insights"),
+            "dataset_profile": result.get("dataset_profile"),
             "chart": result.get("chart"),
             "dataset_url": result.get("dataset_url"),
             "dataset_topic": result.get("dataset_topic"),

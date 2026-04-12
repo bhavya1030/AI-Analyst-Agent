@@ -21,6 +21,7 @@ def planner_agent(state):
     if "dataset_search" in intents:
 
         plan.append("fetch_data")
+        plan.append("profile_data")
 
         if "visualization" in intents:
             plan.append("run_viz")
@@ -43,6 +44,7 @@ def planner_agent(state):
 
         if dataset_available:
 
+            plan.append("profile_data")
             plan.append("run_viz")
 
             state["plan"] = plan
@@ -79,7 +81,7 @@ def planner_agent(state):
 
     if dataset_available:
 
-        plan.append("run_eda")
+        plan.extend(["profile_data", "run_eda", "generate_insight"])
 
         state["plan"] = plan
         return state
