@@ -24,35 +24,37 @@ def viz_agent(state):
     df = state.get("data")
     question = state.get("question", "").lower()
 
+    profile = state.get("dataset_profile", {})
+
     last_column = state.get("last_column_used")
+    last_columns = state.get("last_columns_used")
 
     if df is None:
 
         state["chart"] = None
         return state
 
-
     numeric_cols = df.select_dtypes(include="number").columns.tolist()
+    categorical_cols = df.select_dtypes(exclude="number").columns.tolist()
+
+    time_cols = profile.get("time_columns", [])
 
     if not numeric_cols:
 
         state["chart"] = None
         return state
 
-
     fig = None
     used_cols = []
 
-
-    # -------------------------------
-    # HISTOGRAM / DISTRIBUTION
-    # -------------------------------
+    # --------------------------------
+    # USER REQUEST: DISTRIBUTION
+    # --------------------------------
 
     if "distribution" in question or "histogram" in question:
 
         col = best_column_match(question, numeric_cols, last_column)
 
-        # fallback to first numeric column
         if col is None:
             col = numeric_cols[0]
 
@@ -61,10 +63,9 @@ def viz_agent(state):
         used_cols = [col]
         state["last_column_used"] = col
 
-
-    # -------------------------------
-    # SCATTER (X vs Y)
-    # -------------------------------
+    # --------------------------------
+    # USER REQUEST: SCATTER (X vs Y)
+    # --------------------------------
 
     elif "vs" in question:
 
@@ -84,13 +85,13 @@ def viz_agent(state):
             fig = px.scatter(df, x=col_x, y=col_y)
 
             used_cols = [col_x, col_y]
-            state["last_column_used"] = col_y
+
             state["last_columns_used"] = used_cols
+            state["last_column_used"] = col_y
 
-
-    # -------------------------------
-    # CORRELATION HEATMAP
-    # -------------------------------
+    # --------------------------------
+    # USER REQUEST: CORRELATION
+    # --------------------------------
 
     elif "correlation" in question or "heatmap" in question:
 
@@ -102,28 +103,56 @@ def viz_agent(state):
                 z=corr.values,
                 x=list(corr.columns),
                 y=list(corr.columns),
-                colorscale="Viridis",
+                colorscale="Viridis"
             )
 
             used_cols = numeric_cols
 
+    # --------------------------------
+    # AUTO MODE: TIME-SERIES TREND
+    # --------------------------------
 
-    # -------------------------------
-    # DEFAULT FALLBACK
-    # -------------------------------
+    elif time_cols:
+
+        time_col = time_cols[0]
+        value_col = numeric_cols[-1]
+
+        fig = px.line(df, x=time_col, y=value_col)
+
+        used_cols = [time_col, value_col]
+
+        state["last_columns_used"] = used_cols
+
+    # --------------------------------
+    # AUTO MODE: CATEGORY COMPARISON
+    # --------------------------------
+
+    elif categorical_cols:
+
+        category = categorical_cols[0]
+        value_col = numeric_cols[0]
+
+        fig = px.box(df, x=category, y=value_col)
+
+        used_cols = [category, value_col]
+
+    # --------------------------------
+    # AUTO MODE: DEFAULT FALLBACK
+    # --------------------------------
 
     else:
 
-        col = best_column_match(question, numeric_cols, last_column)
-
-        if col is None:
-            col = numeric_cols[0]
+        col = numeric_cols[0]
 
         fig = px.histogram(df, x=col)
 
         used_cols = [col]
+
         state["last_column_used"] = col
 
+    # --------------------------------
+    # SAVE RESULT
+    # --------------------------------
 
     if fig:
 
@@ -134,6 +163,5 @@ def viz_agent(state):
 
         state["chart"] = None
         state["chart_columns_used"] = None
-
 
     return state

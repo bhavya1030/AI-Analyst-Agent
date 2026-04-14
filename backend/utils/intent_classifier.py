@@ -55,6 +55,16 @@ def classify_intents(question: str):
         "interpret",
     ]
 
+    auto_analysis_keywords = [
+        "analyze dataset",
+        "analyze data",
+        "explore dataset",
+        "explore data",
+        "summarize dataset",
+        "summarize data",
+        "study dataset"
+    ]
+
     if any(k in question for k in dataset_keywords):
         intents.append("dataset_search")
 
@@ -69,6 +79,9 @@ def classify_intents(question: str):
 
     if any(k in question for k in explain_keywords):
         intents.append("explanation")
+
+    if any(k in question for k in auto_analysis_keywords):
+        intents.append("auto_analysis")
 
     if not intents:
         intents.append("eda")

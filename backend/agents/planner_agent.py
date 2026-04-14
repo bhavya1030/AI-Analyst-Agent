@@ -1,5 +1,6 @@
 from backend.utils.intent_classifier import classify_intents
 
+
 def planner_agent(state):
 
     question = state.get("question", "").lower()
@@ -15,13 +16,14 @@ def planner_agent(state):
     plan = []
 
     # --------------------------
-    # DATASET SEARCH INTENT
+    # DATASET SEARCH
     # --------------------------
 
     if "dataset_search" in intents:
 
         plan.append("fetch_data")
         plan.append("profile_data")
+        plan.append("recommend_analysis")
 
         if "visualization" in intents:
             plan.append("run_viz")
@@ -35,9 +37,31 @@ def planner_agent(state):
         state["plan"] = plan
         return state
 
+    # --------------------------
+    # AUTO ANALYSIS MODE
+    # --------------------------
+
+    if "auto_analysis" in intents:
+
+        if dataset_available:
+
+            plan.extend([
+                "profile_data",
+                "recommend_analysis",
+                "run_eda",
+                "run_viz",
+                "generate_insight"
+            ])
+
+            state["plan"] = plan
+            return state
+
+        state["answer"] = "Please load or fetch a dataset first."
+        state["stop"] = True
+        return state
 
     # --------------------------
-    # VISUALIZATION INTENT
+    # VISUALIZATION
     # --------------------------
 
     if "visualization" in intents:
@@ -52,12 +76,10 @@ def planner_agent(state):
 
         state["answer"] = "Please load or fetch a dataset first."
         state["stop"] = True
-
         return state
 
-
     # --------------------------
-    # STATISTICS INTENT
+    # STATISTICAL ANALYSIS
     # --------------------------
 
     if "statistical_analysis" in intents:
@@ -71,21 +93,23 @@ def planner_agent(state):
 
         state["answer"] = "Please load or fetch a dataset first."
         state["stop"] = True
-
         return state
 
-
     # --------------------------
-    # DEFAULT → EDA
+    # DEFAULT EDA FLOW
     # --------------------------
 
     if dataset_available:
 
-        plan.extend(["profile_data", "run_eda", "generate_insight"])
+        plan.extend([
+            "profile_data",
+            "recommend_analysis",
+            "run_eda",
+            "generate_insight"
+        ])
 
         state["plan"] = plan
         return state
-
 
     state["answer"] = "Please load or fetch a dataset first."
     state["stop"] = True
