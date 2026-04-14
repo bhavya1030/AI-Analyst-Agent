@@ -60,8 +60,18 @@ def planner_agent(state):
         state["stop"] = True
         return state
 
+    # --------------------------    # MULTI-DATASET COMPARISON
     # --------------------------
-    # VISUALIZATION
+
+    if "comparison" in intents:
+
+        plan.append("compare_datasets")
+
+        state["plan"] = plan
+
+        return state
+
+    # --------------------------    # VISUALIZATION
     # --------------------------
 
     if "visualization" in intents:
@@ -115,3 +125,4 @@ def planner_agent(state):
     state["stop"] = True
 
     return state
+
