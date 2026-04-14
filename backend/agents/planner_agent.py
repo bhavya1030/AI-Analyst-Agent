@@ -1,17 +1,37 @@
 from backend.utils.intent_classifier import classify_intents
 
 
+def _ensure_dataset_loaded(state, plan):
+    if state.get("data") is not None:
+        return True
+
+    if state.get("file_path"):
+        if "load_data" not in plan:
+            plan.append("load_data")
+        return True
+
+    return False
+
+
+def _dedupe_plan(plan):
+    deduped = []
+
+    for step in plan:
+        if step not in deduped:
+            deduped.append(step)
+
+    return deduped
+
+
 def planner_agent(state):
 
-    question = state.get("question", "").lower()
+    question = (state.get("question") or "").strip().lower()
 
     print("PLANNER RECEIVED QUESTION:", question)
 
     intents = classify_intents(question)
 
     print("DETECTED INTENTS:", intents)
-
-    dataset_available = state.get("data") is not None
 
     plan = []
 
@@ -23,7 +43,11 @@ def planner_agent(state):
 
         plan.append("fetch_data")
         plan.append("profile_data")
-        plan.append("recommend_analysis")
+
+        if "explanation" in intents:
+            plan.append("explain_dataset")
+        else:
+            plan.append("recommend_analysis")
 
         if "visualization" in intents:
             plan.append("run_viz")
@@ -34,7 +58,7 @@ def planner_agent(state):
         else:
             plan.append("run_eda")
 
-        state["plan"] = plan
+        state["plan"] = _dedupe_plan(plan)
         return state
 
     # --------------------------
@@ -43,45 +67,81 @@ def planner_agent(state):
 
     if "auto_analysis" in intents:
 
-        if dataset_available:
+        if _ensure_dataset_loaded(state, plan):
 
             plan.extend([
                 "profile_data",
                 "recommend_analysis",
                 "run_eda",
                 "run_viz",
-                "generate_insight"
             ])
 
-            state["plan"] = plan
+            if "statistical_analysis" in intents:
+                plan.append("run_qa")
+
+            if "explanation" in intents:
+                plan.insert(plan.index("run_eda"), "explain_dataset")
+
+            state["plan"] = _dedupe_plan(plan)
             return state
 
         state["answer"] = "Please load or fetch a dataset first."
         state["stop"] = True
         return state
 
-    # --------------------------    # MULTI-DATASET COMPARISON
+    # --------------------------
+    # MULTI-DATASET COMPARISON
     # --------------------------
 
     if "comparison" in intents:
-
         plan.append("compare_datasets")
-
-        state["plan"] = plan
-
+        state["plan"] = _dedupe_plan(plan)
         return state
 
-    # --------------------------    # VISUALIZATION
+    if "cleaning" in intents:
+
+        if not _ensure_dataset_loaded(state, plan):
+            state["answer"] = "Please load or fetch a dataset first."
+            state["stop"] = True
+            return state
+
+        plan.append("clean_data")
+
+    # --------------------------
+    # EXPLANATION
+    # --------------------------
+
+    if "explanation" in intents:
+
+        if _ensure_dataset_loaded(state, plan):
+            if "profile_data" not in plan:
+                plan.append("profile_data")
+            plan.append("explain_dataset")
+
+            if "visualization" in intents:
+                plan.append("run_viz")
+            elif "statistical_analysis" in intents:
+                plan.append("run_qa")
+
+            state["plan"] = _dedupe_plan(plan)
+            return state
+
+        state["answer"] = "Please load or fetch a dataset first."
+        state["stop"] = True
+        return state
+
+    # --------------------------
+    # VISUALIZATION
     # --------------------------
 
     if "visualization" in intents:
 
-        if dataset_available:
+        if _ensure_dataset_loaded(state, plan):
 
             plan.append("profile_data")
             plan.append("run_viz")
 
-            state["plan"] = plan
+            state["plan"] = _dedupe_plan(plan)
             return state
 
         state["answer"] = "Please load or fetch a dataset first."
@@ -94,11 +154,11 @@ def planner_agent(state):
 
     if "statistical_analysis" in intents:
 
-        if dataset_available:
+        if _ensure_dataset_loaded(state, plan):
 
             plan.append("run_qa")
 
-            state["plan"] = plan
+            state["plan"] = _dedupe_plan(plan)
             return state
 
         state["answer"] = "Please load or fetch a dataset first."
@@ -109,16 +169,15 @@ def planner_agent(state):
     # DEFAULT EDA FLOW
     # --------------------------
 
-    if dataset_available:
+    if _ensure_dataset_loaded(state, plan):
 
         plan.extend([
             "profile_data",
             "recommend_analysis",
             "run_eda",
-            "generate_insight"
         ])
 
-        state["plan"] = plan
+        state["plan"] = _dedupe_plan(plan)
         return state
 
     state["answer"] = "Please load or fetch a dataset first."

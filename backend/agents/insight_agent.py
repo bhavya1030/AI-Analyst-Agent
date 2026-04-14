@@ -5,8 +5,25 @@ def insight_agent(state):
         return state
 
     insights = state.get("insights", [])
+    dataset_explanation = state.get("dataset_explanation", [])
+    dataset_profile = state.get("dataset_profile", {})
 
     if not insights:
+        if dataset_explanation:
+            state["answer"] = " ".join(dataset_explanation)
+            return state
+
+        if dataset_profile:
+            rows = dataset_profile.get("rows", 0)
+            numeric_count = len(dataset_profile.get("numeric_columns", []))
+            categorical_count = len(dataset_profile.get("categorical_columns", []))
+            state["answer"] = (
+                f"Dataset contains {rows} rows with "
+                f"{numeric_count} numeric columns and "
+                f"{categorical_count} categorical columns."
+            )
+            return state
+
         state["answer"] = "No dataset insights available."
         return state
 

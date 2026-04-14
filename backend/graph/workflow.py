@@ -10,91 +10,118 @@ from backend.agents.qa_agent import qa_agent
 from backend.agents.insight_agent import insight_agent
 from backend.agents.dataset_profile_agent import dataset_profile_agent
 from backend.agents.recommendation_agent import recommendation_agent
+from backend.agents.dataset_insight_agent import dataset_insight_agent
 from backend.agents.comparison_agent import comparison_agent
 
-def router(state):
+ROUTE_MAP = {
+    "load_data": "load_data",
+    "fetch_data": "fetch_data",
+    "profile_data": "profile_data",
+    "recommend_analysis": "recommend_analysis",
+    "explain_dataset": "explain_dataset",
+    "clean_data": "clean_data",
+    "run_eda": "run_eda",
+    "run_viz": "run_viz",
+    "run_qa": "run_qa",
+    "compare_datasets": "compare_datasets",
+    "generate_insight": "generate_insight",
+}
 
+
+def _wrap_agent(node_name, agent):
+    def _runner(state):
+        plan = list(state.get("plan") or [])
+
+        if plan and plan[0] == node_name:
+            state["plan"] = plan[1:]
+
+        return agent(state)
+
+    return _runner
+
+
+def router(state):
     if state.get("stop"):
         return "generate_insight"
 
-    plan = state.get("plan", [])
+    plan = list(state.get("plan") or [])
 
     if not plan:
         return "generate_insight"
 
-    return plan.pop(0)
+    next_node = plan[0]
+
+    if next_node in ROUTE_MAP:
+        return next_node
+
+    return "generate_insight"
 
 
 def build_graph():
 
     builder = StateGraph(dict)
 
-    # Nodes
+    # -------------------------
+    # REGISTER NODES
+    # -------------------------
+
     builder.add_node("planner", planner_agent)
-    builder.add_node("load_data", data_agent)
-    builder.add_node("fetch_data", data_engineer_agent)
-    builder.add_node("profile_data", dataset_profile_agent)
-    builder.add_node("recommend_analysis", recommendation_agent)
-    builder.add_node("clean_data", cleaning_agent)
-    builder.add_node("run_eda", eda_agent)
-    builder.add_node("run_viz", viz_agent)
-    builder.add_node("run_qa", qa_agent)
+
+    builder.add_node("load_data", _wrap_agent("load_data", data_agent))
+    builder.add_node("fetch_data", _wrap_agent("fetch_data", data_engineer_agent))
+
+    builder.add_node("profile_data", _wrap_agent("profile_data", dataset_profile_agent))
+    builder.add_node(
+        "recommend_analysis",
+        _wrap_agent("recommend_analysis", recommendation_agent),
+    )
+    builder.add_node(
+        "explain_dataset",
+        _wrap_agent("explain_dataset", dataset_insight_agent),
+    )
+
+    builder.add_node("clean_data", _wrap_agent("clean_data", cleaning_agent))
+
+    builder.add_node("run_eda", _wrap_agent("run_eda", eda_agent))
+    builder.add_node("run_viz", _wrap_agent("run_viz", viz_agent))
+    builder.add_node("run_qa", _wrap_agent("run_qa", qa_agent))
+
+    builder.add_node(
+        "compare_datasets",
+        _wrap_agent("compare_datasets", comparison_agent),
+    )
+
     builder.add_node("generate_insight", insight_agent)
-    builder.add_node("compare_datasets", comparison_agent)
+
+    # -------------------------
+    # ENTRY POINT
+    # -------------------------
 
     builder.set_entry_point("planner")
 
-    # Planner routing
-    builder.add_conditional_edges(
+    for node_name in [
         "planner",
-        router,
-        {
-            "load_data": "load_data",
-            "fetch_data": "fetch_data",
-            "profile_data": "profile_data",
-            "recommend_analysis": "recommend_analysis",
-            "run_eda": "run_eda",
-            "run_viz": "run_viz",
-            "run_qa": "run_qa",
-            "compare_datasets": "compare_datasets",
-            "generate_insight": "generate_insight",
-        },
-    )
-
-    # After loading dataset
-    builder.add_conditional_edges(
         "load_data",
-        router,
-        {
-            "profile_data": "profile_data",
-            "run_eda": "run_eda",
-            "run_viz": "run_viz",
-            "run_qa": "run_qa",
-            "generate_insight": "generate_insight",
-        },
-    )
-
-    # After fetching dataset
-    builder.add_conditional_edges(
         "fetch_data",
-        router,
-        {
-            "profile_data": "profile_data",
-            "run_eda": "run_eda",
-            "run_viz": "run_viz",
-            "run_qa": "run_qa",
-            "generate_insight": "generate_insight",
-        },
-    )
+        "profile_data",
+        "recommend_analysis",
+        "explain_dataset",
+        "clean_data",
+        "run_eda",
+        "run_viz",
+        "run_qa",
+    ]:
+        builder.add_conditional_edges(node_name, router, ROUTE_MAP)
 
-    # Sequential intelligence pipeline
-    builder.add_edge("profile_data", "recommend_analysis")
-    builder.add_edge("recommend_analysis", "run_eda")
+    # -------------------------
+    # AFTER COMPARISON AGENT
+    # -------------------------
 
-    builder.add_edge("run_eda", "generate_insight")
-    builder.add_edge("run_viz", "generate_insight")
-    builder.add_edge("run_qa", "generate_insight")
     builder.add_edge("compare_datasets", "generate_insight")
+
+    # -------------------------
+    # TERMINAL EDGES
+    # -------------------------
 
     builder.add_edge("generate_insight", END)
 

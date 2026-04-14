@@ -1,4 +1,4 @@
-import pandas as pd
+from backend.utils.dataset_loader import load_dataset
 
 
 def data_agent(state):
@@ -9,8 +9,16 @@ def data_agent(state):
         state["error"] = "No dataset path provided."
         return state
 
-    df = pd.read_csv(file_path)
+    try:
+        df = load_dataset(file_path)
+    except Exception as exc:
+        state["error"] = f"Dataset loading failed: {exc}"
+        state["data"] = None
+        return state
 
     state["data"] = df
+    state["rows"] = int(df.shape[0])
+    state["columns"] = df.columns.tolist()
+    state["dataset_url"] = None
 
     return state

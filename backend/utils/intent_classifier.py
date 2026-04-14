@@ -1,6 +1,6 @@
 def classify_intents(question: str):
 
-    question = question.lower()
+    question = (question or "").lower()
 
     intents = []
 
@@ -43,9 +43,14 @@ def classify_intents(question: str):
 
     compare_keywords = [
         "compare",
-        "vs",
         "difference",
         "relationship",
+    ]
+
+    comparison_topics = [
+        "gdp",
+        "population",
+        "inflation",
     ]
 
     explain_keywords = [
@@ -65,6 +70,14 @@ def classify_intents(question: str):
         "study dataset"
     ]
 
+    cleaning_keywords = [
+        "clean",
+        "missing values",
+        "null values",
+        "drop missing",
+        "remove null",
+    ]
+
     if any(k in question for k in dataset_keywords):
         intents.append("dataset_search")
 
@@ -74,7 +87,8 @@ def classify_intents(question: str):
     if any(k in question for k in stat_keywords):
         intents.append("statistical_analysis")
 
-    if any(k in question for k in compare_keywords):
+    if (any(k in question for k in compare_keywords)
+            and any(topic in question for topic in comparison_topics)):
         intents.append("comparison")
 
     if any(k in question for k in explain_keywords):
@@ -83,7 +97,10 @@ def classify_intents(question: str):
     if any(k in question for k in auto_analysis_keywords):
         intents.append("auto_analysis")
 
+    if any(k in question for k in cleaning_keywords):
+        intents.append("cleaning")
+
     if not intents:
         intents.append("eda")
 
-    return intents
+    return list(dict.fromkeys(intents))

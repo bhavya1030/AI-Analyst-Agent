@@ -1,17 +1,18 @@
-import pandas as pd
+from backend.utils.dataset_loader import load_dataset
 
 
 def data_engineer_agent(state):
 
     print("DATA ENGINEER AGENT EXECUTING")
 
-    question = state.get("question", "").lower()
+    question = (state.get("question") or "").lower()
 
     dataset_map = {
 
         "student": "https://raw.githubusercontent.com/mwaskom/seaborn-data/master/exercise.csv",
+        "students": "https://raw.githubusercontent.com/mwaskom/seaborn-data/master/exercise.csv",
 
-        "unemployment": "https://raw.githubusercontent.com/plotly/datasets/master/finance-charts-apple.csv",
+        "unemployment": "https://raw.githubusercontent.com/datasets/unemployment/master/data/unemployment.csv",
 
         "gdp": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
 
@@ -37,19 +38,25 @@ def data_engineer_agent(state):
 
     try:
 
-        df = pd.read_csv(selected_url)
+        df = load_dataset(selected_url)
 
         state["data"] = df
         state["dataset_url"] = selected_url
-        state["rows"] = df.shape[0]
-        state["columns"] = df.shape[1]
+        state["rows"] = int(df.shape[0])
+        state["columns"] = df.columns.tolist()
+        state["dataset_topic"] = next(
+            keyword for keyword, url in dataset_map.items()
+            if url == selected_url
+        )
         state["source"] = "fallback_dataset_loader"
+        state.pop("error", None)
 
         print("DATASET LOADED SUCCESSFULLY")
 
     except Exception as e:
 
         state["error"] = f"Dataset loading failed: {str(e)}"
+        state["data"] = None
         print("DATASET FAILED:", str(e))
 
     return state

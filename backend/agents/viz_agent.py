@@ -1,6 +1,12 @@
-from rapidfuzz import process
 import plotly.express as px
 import plotly.figure_factory as ff
+
+from backend.utils.json_safe import figure_to_json
+
+try:
+    from rapidfuzz import process
+except ImportError:  # pragma: no cover
+    process = None
 
 
 def best_column_match(text, columns, last_column=None):
@@ -8,7 +14,10 @@ def best_column_match(text, columns, last_column=None):
     if not columns:
         return None
 
-    match = process.extractOne(text, columns)
+    if process is not None:
+        match = process.extractOne(text, columns)
+    else:
+        match = None
 
     if match and match[1] > 55:
         return match[0]
@@ -20,148 +29,129 @@ def best_column_match(text, columns, last_column=None):
 
 
 def viz_agent(state):
+    try:
+        df = state.get("data")
+        question = (state.get("question") or "").lower()
 
-    df = state.get("data")
-    question = state.get("question", "").lower()
+        profile = state.get("dataset_profile", {})
 
-    profile = state.get("dataset_profile", {})
+        last_column = state.get("last_column_used")
+        if df is None:
 
-    last_column = state.get("last_column_used")
-    last_columns = state.get("last_columns_used")
+            state["chart"] = None
+            state["chart_columns_used"] = []
+            return state
 
-    if df is None:
+        numeric_cols = df.select_dtypes(include="number").columns.tolist()
+        categorical_cols = df.select_dtypes(exclude="number").columns.tolist()
 
-        state["chart"] = None
-        return state
+        time_cols = profile.get("time_columns", [])
 
-    numeric_cols = df.select_dtypes(include="number").columns.tolist()
-    categorical_cols = df.select_dtypes(exclude="number").columns.tolist()
+        if not numeric_cols:
 
-    time_cols = profile.get("time_columns", [])
+            state["chart"] = None
+            state["chart_columns_used"] = []
+            return state
 
-    if not numeric_cols:
+        fig = None
+        used_cols = []
 
-        state["chart"] = None
-        return state
+        if "distribution" in question or "histogram" in question:
 
-    fig = None
-    used_cols = []
+            col = best_column_match(question, numeric_cols, last_column)
 
-    # --------------------------------
-    # USER REQUEST: DISTRIBUTION
-    # --------------------------------
+            if col is None:
+                col = numeric_cols[0]
 
-    if "distribution" in question or "histogram" in question:
+            fig = px.histogram(df, x=col)
 
-        col = best_column_match(question, numeric_cols, last_column)
+            used_cols = [col]
+            state["last_column_used"] = col
 
-        if col is None:
-            col = numeric_cols[0]
+        elif "vs" in question:
 
-        fig = px.histogram(df, x=col)
+            parts = question.split("vs")
 
-        used_cols = [col]
-        state["last_column_used"] = col
+            if len(parts) == 2 and len(numeric_cols) >= 2:
 
-    # --------------------------------
-    # USER REQUEST: SCATTER (X vs Y)
-    # --------------------------------
+                col_x = best_column_match(parts[0], numeric_cols)
+                col_y = best_column_match(parts[1], numeric_cols)
 
-    elif "vs" in question:
+                if col_x is None:
+                    col_x = numeric_cols[0]
 
-        parts = question.split("vs")
+                if col_y is None and len(numeric_cols) > 1:
+                    col_y = numeric_cols[1]
+                elif col_y is None:
+                    col_y = numeric_cols[0]
 
-        if len(parts) == 2:
+                fig = px.scatter(df, x=col_x, y=col_y)
 
-            col_x = best_column_match(parts[0], numeric_cols)
-            col_y = best_column_match(parts[1], numeric_cols)
+                used_cols = [col_x, col_y]
 
-            if col_x is None:
-                col_x = numeric_cols[0]
+                state["last_columns_used"] = used_cols
+                state["last_column_used"] = col_y
 
-            if col_y is None:
-                col_y = numeric_cols[1]
+        elif "correlation" in question or "heatmap" in question:
 
-            fig = px.scatter(df, x=col_x, y=col_y)
+            if len(numeric_cols) >= 2:
 
-            used_cols = [col_x, col_y]
+                corr = df[numeric_cols].corr()
+
+                fig = ff.create_annotated_heatmap(
+                    z=corr.values,
+                    x=list(corr.columns),
+                    y=list(corr.columns),
+                    colorscale="Viridis"
+                )
+
+                used_cols = numeric_cols
+
+        elif time_cols:
+
+            time_col = time_cols[0]
+            value_col = numeric_cols[-1]
+
+            fig = px.line(df, x=time_col, y=value_col)
+
+            used_cols = [time_col, value_col]
 
             state["last_columns_used"] = used_cols
-            state["last_column_used"] = col_y
 
-    # --------------------------------
-    # USER REQUEST: CORRELATION
-    # --------------------------------
+        elif categorical_cols:
 
-    elif "correlation" in question or "heatmap" in question:
+            category = categorical_cols[0]
+            value_col = numeric_cols[0]
 
-        if len(numeric_cols) >= 2:
+            fig = px.box(df, x=category, y=value_col)
 
-            corr = df[numeric_cols].corr()
+            used_cols = [category, value_col]
 
-            fig = ff.create_annotated_heatmap(
-                z=corr.values,
-                x=list(corr.columns),
-                y=list(corr.columns),
-                colorscale="Viridis"
-            )
+        else:
 
-            used_cols = numeric_cols
+            col = numeric_cols[0]
 
-    # --------------------------------
-    # AUTO MODE: TIME-SERIES TREND
-    # --------------------------------
+            fig = px.histogram(df, x=col)
 
-    elif time_cols:
+            used_cols = [col]
 
-        time_col = time_cols[0]
-        value_col = numeric_cols[-1]
+            state["last_column_used"] = col
 
-        fig = px.line(df, x=time_col, y=value_col)
+        if fig:
 
-        used_cols = [time_col, value_col]
+            state["chart"] = figure_to_json(fig)
+            state["chart_columns_used"] = used_cols
+            state["rows"] = int(df.shape[0])
+            state["columns"] = df.columns.tolist()
 
-        state["last_columns_used"] = used_cols
+        else:
 
-    # --------------------------------
-    # AUTO MODE: CATEGORY COMPARISON
-    # --------------------------------
+            state["chart"] = None
+            state["chart_columns_used"] = []
 
-    elif categorical_cols:
-
-        category = categorical_cols[0]
-        value_col = numeric_cols[0]
-
-        fig = px.box(df, x=category, y=value_col)
-
-        used_cols = [category, value_col]
-
-    # --------------------------------
-    # AUTO MODE: DEFAULT FALLBACK
-    # --------------------------------
-
-    else:
-
-        col = numeric_cols[0]
-
-        fig = px.histogram(df, x=col)
-
-        used_cols = [col]
-
-        state["last_column_used"] = col
-
-    # --------------------------------
-    # SAVE RESULT
-    # --------------------------------
-
-    if fig:
-
-        state["chart"] = fig.to_dict()
-        state["chart_columns_used"] = used_cols
-
-    else:
-
+        return state
+    except Exception as exc:
         state["chart"] = None
-        state["chart_columns_used"] = None
-
-    return state
+        state["chart_columns_used"] = []
+        state["error"] = f"Visualization failed: {exc}"
+        return state
