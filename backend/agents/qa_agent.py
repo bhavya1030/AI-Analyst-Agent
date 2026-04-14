@@ -1,4 +1,7 @@
-from rapidfuzz import process
+try:
+    from rapidfuzz import process
+except ImportError:  # pragma: no cover
+    process = None
 
 
 def best_column_match(text, columns, last_column=None):
@@ -6,7 +9,10 @@ def best_column_match(text, columns, last_column=None):
     if not columns:
         return None
 
-    match = process.extractOne(text, columns)
+    if process is not None:
+        match = process.extractOne(text, columns)
+    else:
+        match = None
 
     if match and match[1] > 55:
         return match[0]
@@ -21,7 +27,7 @@ def best_column_match(text, columns, last_column=None):
 def qa_agent(state):
 
     df = state.get("data")
-    question = state.get("question", "").lower()
+    question = (state.get("question") or "").lower()
     last_column = state.get("last_column_used")
 
     if df is None:
@@ -147,6 +153,46 @@ def qa_agent(state):
     if "count" in question:
 
         state["answer"] = f"Dataset contains {len(df)} rows."
+        return state
+
+    # -----------------------------
+    # SUM
+    # -----------------------------
+
+    if "sum" in question:
+
+        if matched_col:
+            value = round(df[matched_col].sum(), 2)
+            state["answer"] = f"Sum of {matched_col} = {value}"
+            state["last_column_used"] = matched_col
+        else:
+            results = {
+                col: round(df[col].sum(), 2)
+                for col in numeric_cols
+            }
+            state["answer"] = f"Sum values: {results}"
+
+        return state
+
+    # -----------------------------
+    # VARIANCE / STD
+    # -----------------------------
+
+    if "variance" in question or "std" in question:
+        metric_name = "Variance" if "variance" in question else "Standard deviation"
+        metric_func = "var" if "variance" in question else "std"
+
+        if matched_col:
+            value = round(getattr(df[matched_col], metric_func)(), 2)
+            state["answer"] = f"{metric_name} of {matched_col} = {value}"
+            state["last_column_used"] = matched_col
+        else:
+            results = {
+                col: round(getattr(df[col], metric_func)(), 2)
+                for col in numeric_cols
+            }
+            state["answer"] = f"{metric_name} values: {results}"
+
         return state
 
 

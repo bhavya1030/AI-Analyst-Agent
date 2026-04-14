@@ -1,11 +1,39 @@
 import pandas as pd
 
 
+def _is_time_column(df, column_name):
+    column = df[column_name]
+    normalized_name = column_name.lower().replace("-", "_").replace(" ", "_")
+    tokens = set(normalized_name.split("_"))
+
+    if pd.api.types.is_datetime64_any_dtype(column):
+        return True
+
+    if {"date", "time", "timestamp"} & tokens:
+        return True
+
+    if "year" in tokens and pd.api.types.is_numeric_dtype(column):
+        values = pd.to_numeric(column.dropna(), errors="coerce")
+        values = values[(values >= 1800) & (values <= 2100)]
+        return len(values) >= 2 and values.nunique() >= 2
+
+    if "month" in tokens and pd.api.types.is_numeric_dtype(column):
+        values = pd.to_numeric(column.dropna(), errors="coerce")
+        return values.between(1, 12).all() if not values.empty else False
+
+    if "day" in tokens and pd.api.types.is_numeric_dtype(column):
+        values = pd.to_numeric(column.dropna(), errors="coerce")
+        return values.between(1, 31).all() if not values.empty else False
+
+    return False
+
+
 def dataset_profile_agent(state):
 
     df = state.get("data")
 
     if df is None:
+        state["dataset_profile"] = {}
         return state
 
     profile = {}
@@ -14,8 +42,9 @@ def dataset_profile_agent(state):
     # BASIC STRUCTURE
     # -----------------------------
 
-    profile["rows"] = df.shape[0]
-    profile["columns"] = df.shape[1]
+    profile["rows"] = int(df.shape[0])
+    profile["columns"] = int(df.shape[1])
+    profile["column_names"] = df.columns.tolist()
 
     numeric_cols = df.select_dtypes(include="number").columns.tolist()
     categorical_cols = df.select_dtypes(exclude="number").columns.tolist()
@@ -30,10 +59,7 @@ def dataset_profile_agent(state):
     time_columns = []
 
     for col in df.columns:
-
-        col_lower = col.lower()
-
-        if any(keyword in col_lower for keyword in ["date", "year", "time"]):
+        if _is_time_column(df, col):
             time_columns.append(col)
 
     profile["time_columns"] = time_columns
@@ -71,5 +97,7 @@ def dataset_profile_agent(state):
     # -----------------------------
 
     state["dataset_profile"] = profile
+    state["rows"] = int(df.shape[0])
+    state["columns"] = df.columns.tolist()
 
     return state

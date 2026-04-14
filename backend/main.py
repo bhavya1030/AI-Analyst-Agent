@@ -1,197 +1,223 @@
+import shutil
+from pathlib import Path
+from urllib.parse import urlparse
+
 from dotenv import load_dotenv
+from fastapi import FastAPI, File, UploadFile
+from fastapi.responses import JSONResponse
+
+from backend.db import get_session, save_session
+from backend.graph.workflow import build_graph
+from backend.utils.dataset_loader import load_dataset
+from backend.utils.json_safe import make_json_safe
+
 load_dotenv()
 
-from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import JSONResponse
-import shutil
-import os
-import pandas as pd
-
-from backend.graph.workflow import build_graph
-from backend.db import get_session, save_session
+BASE_DIR = Path(__file__).resolve().parents[1]
+DATA_DIR = BASE_DIR / "data"
 
 app = FastAPI(title="AI Analyst Agent API")
-
-# Initialize LangGraph workflow
 graph = build_graph()
 
 
-# -------------------------------
-# Root Endpoint
-# -------------------------------
+def _load_session_dataset(session):
+    if session is None:
+        return None
 
-@app.get("/")
-def home():
-    return {"message": "AI Analyst Backend Running 🚀"}
+    dataset_path = getattr(session, "dataset_path", None)
+    dataset_url = getattr(session, "dataset_url", None)
 
-
-# -------------------------------
-# Dataset Upload Endpoint
-# -------------------------------
-
-@app.post("/upload")
-def upload_dataset(file: UploadFile = File(...)):
-
-    os.makedirs("data", exist_ok=True)
-
-    upload_path = f"data/{file.filename}"
-
-    try:
-
-        with open(upload_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
-        return {
-            "message": "Dataset uploaded successfully",
-            "file_path": upload_path
-        }
-
-    except Exception as e:
-
-        return JSONResponse(
-            status_code=500,
-            content={"error": f"Upload failed: {str(e)}"}
-        )
-
-
-# -------------------------------
-# Automated Analysis Endpoint
-# -------------------------------
-
-@app.get("/analyze")
-def analyze(session_id: str = "default"):
-
-    session = get_session(session_id)
-
-    dataset = None
-
-    if session and session.dataset_path:
+    if dataset_path:
         try:
-            dataset = pd.read_csv(session.dataset_path)
-            print("SESSION DATASET RELOADED:", session.dataset_path)
-        except Exception as e:
-            print("FAILED TO LOAD SESSION DATASET:", e)
+            dataset = load_dataset(dataset_path)
+            print("SESSION DATASET RELOADED:", dataset_path)
+            return dataset
+        except Exception as exc:
+            print("FAILED TO LOAD SESSION DATASET PATH:", exc)
 
-    state = {
+    if dataset_url:
+        try:
+            dataset = load_dataset(dataset_url)
+            print("SESSION DATASET RELOADED:", dataset_url)
+            return dataset
+        except Exception as exc:
+            print("FAILED TO LOAD SESSION DATASET URL:", exc)
+
+    return None
+
+
+def _is_remote_reference(reference: str) -> bool:
+    if not reference:
+        return False
+    parsed = urlparse(reference)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _normalize_dataset_reference(file_path: str | None) -> str | None:
+    if not file_path:
+        return None
+
+    if _is_remote_reference(file_path):
+        return file_path
+
+    return str(Path(file_path).expanduser().resolve(strict=False))
+
+
+def _build_state(session, question=None, file_path=None):
+    dataset = None if file_path else _load_session_dataset(session)
+
+    return {
         "data": dataset,
         "last_dataset": dataset,
-        "last_column_used": session.last_column if session else None,
-        "last_columns_used": session.last_columns if session else None,
-        "cleaned": False,
-        "insights": [],
-        "question": None,
-        "answer": None,
-        "chart": None,
-        "plan": []
-    }
-
-    try:
-
-        result = graph.invoke(state)
-
-        df = result.get("data")
-
-        if df is None:
-            return JSONResponse(
-                status_code=400,
-                content={"error": "No dataset available for analysis"}
-            )
-
-        return {
-            "rows": len(df),
-            "columns": list(df.columns),
-            "insights": result.get("insights")
-        }
-
-    except Exception as e:
-
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": "Analysis pipeline failed",
-                "details": str(e)
-            }
-        )
-
-
-# -------------------------------
-# Main AI Analyst Query Endpoint
-# -------------------------------
-
-@app.get("/ask")
-def ask(
-    question: str,
-    session_id: str = "default",
-    file_path: str | None = None
-):
-
-    session = get_session(session_id)
-
-    dataset = None
-
-    if session and session.dataset_path:
-        try:
-            dataset = pd.read_csv(session.dataset_path)
-            print("SESSION DATASET RELOADED:", session.dataset_path)
-        except Exception as e:
-            print("FAILED TO LOAD SESSION DATASET:", e)
-
-    state = {
-        "data": dataset,
-        "last_dataset": dataset,
-        "last_column_used": session.last_column if session else None,
-        "last_columns_used": session.last_columns if session else None,
+        "last_column_used": getattr(session, "last_column", None),
+        "last_columns_used": getattr(session, "last_columns", None) or [],
         "cleaned": False,
         "insights": [],
         "question": question,
         "answer": None,
         "chart": None,
-        "plan": []
+        "plan": [],
+        "dataset_profile": {},
+        "dataset_explanation": [],
+        "recommended_next_steps": [],
+        "chart_columns_used": [],
+        "rows": int(dataset.shape[0]) if dataset is not None else 0,
+        "columns": dataset.columns.tolist() if dataset is not None else [],
+        "error": None,
     }
 
-    if file_path:
-        state["file_path"] = file_path
 
-    try:
+def _stable_response(result, question=None):
+    payload = {
+        "question": question,
+        "answer": result.get("answer"),
+        "insights": result.get("insights") or [],
+        "dataset_profile": result.get("dataset_profile") or {},
+        "dataset_explanation": result.get("dataset_explanation") or [],
+        "recommended_next_steps": result.get("recommended_next_steps") or [],
+        "chart": result.get("chart"),
+        "dataset_url": result.get("dataset_url"),
+        "dataset_topic": result.get("dataset_topic"),
+        "rows": result.get("rows") or 0,
+        "columns": result.get("columns") or [],
+        "chart_columns_used": result.get("chart_columns_used") or [],
+        "error": result.get("error"),
+    }
+    return make_json_safe(payload)
 
-        result = graph.invoke(state)
 
-        dataset_path = None
+@app.get("/")
+def home():
+    return {"message": "AI Analyst Backend Running"}
 
-        if file_path:
-            dataset_path = file_path
 
-        elif result.get("dataset_url"):
-            dataset_path = result["dataset_url"]
+@app.post("/upload")
+def upload_dataset(file: UploadFile = File(...)):
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-        save_session(
-            session_id=session_id,
-            dataset_path=dataset_path,
-            last_column=result.get("last_column_used"),
-            last_columns=result.get("last_columns_used"),
+    filename = Path(file.filename or "").name
+    if not filename:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "A valid filename is required."},
         )
 
-        return {
-            "question": question,
-            "answer": result.get("answer"),
-            "insights": result.get("insights"),
-            "dataset_profile": result.get("dataset_profile"),
-            "recommended_next_steps": result.get("recommended_next_steps", []),
-            "chart": result.get("chart"),
-            "dataset_url": result.get("dataset_url"),
-            "dataset_topic": result.get("dataset_topic"),
-            "rows": result.get("rows"),
-            "columns": result.get("columns"),
-            "chart_columns_used": result.get("chart_columns_used"),
-            "error": result.get("error"),
+    upload_path = DATA_DIR / filename
+
+    try:
+        with upload_path.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        return make_json_safe(
+            {
+                "message": "Dataset uploaded successfully",
+                "file_path": str(upload_path),
+            }
+        )
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Upload failed: {exc}"},
+        )
+
+
+@app.get("/analyze")
+def analyze(session_id: str = "default"):
+    session = get_session(session_id)
+    state = _build_state(session=session, question="analyze dataset")
+
+    try:
+        result = graph.invoke(state)
+
+        if result.get("data") is None:
+            return JSONResponse(
+                status_code=400,
+                content=make_json_safe(
+                    {
+                        "error": result.get("answer") or "No dataset available for analysis",
+                        "insights": result.get("insights") or [],
+                    }
+                ),
+            )
+
+        return _stable_response(result)
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "Analysis pipeline failed",
+                "details": str(exc),
+            },
+        )
+
+
+@app.get("/ask")
+def ask(
+    question: str,
+    session_id: str = "default",
+    file_path: str | None = None,
+):
+    session = get_session(session_id)
+    normalized_file_path = _normalize_dataset_reference(file_path)
+    state = _build_state(
+        session=session,
+        question=question,
+        file_path=normalized_file_path,
+    )
+
+    if normalized_file_path:
+        state["file_path"] = normalized_file_path
+
+    try:
+        result = graph.invoke(state)
+
+        save_kwargs = {
+            "last_column": result.get("last_column_used"),
+            "last_columns": result.get("last_columns_used") or [],
+            "last_query": question,
+            "last_insight": result.get("answer"),
+            "eda_summary": result.get("dataset_profile") or {},
         }
 
-    except Exception as e:
+        if normalized_file_path and result.get("data") is not None:
+            if _is_remote_reference(normalized_file_path):
+                save_kwargs["dataset_path"] = None
+                save_kwargs["dataset_url"] = normalized_file_path
+            elif not result.get("dataset_url"):
+                save_kwargs["dataset_path"] = normalized_file_path
+                save_kwargs["dataset_url"] = None
+        elif result.get("dataset_url") and result.get("data") is not None:
+            save_kwargs["dataset_path"] = None
+            save_kwargs["dataset_url"] = result["dataset_url"]
 
+        save_session(session_id=session_id, **save_kwargs)
+
+        return _stable_response(result, question=question)
+    except Exception as exc:
         return JSONResponse(
             status_code=500,
             content={
                 "error": "Pipeline execution failed",
-                "details": str(e)
-            }
+                "details": str(exc),
+            },
         )

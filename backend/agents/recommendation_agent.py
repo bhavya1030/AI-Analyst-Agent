@@ -3,6 +3,7 @@ def recommendation_agent(state):
     profile = state.get("dataset_profile")
 
     if not profile:
+        state["recommended_next_steps"] = []
         return state
 
     recommendations = []

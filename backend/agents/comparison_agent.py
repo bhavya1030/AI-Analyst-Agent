@@ -1,6 +1,9 @@
 import pandas as pd
 import plotly.express as px
 
+from backend.utils.dataset_loader import load_dataset
+from backend.utils.json_safe import figure_to_json
+
 
 DATASET_SOURCES = {
     "gdp": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
@@ -24,70 +27,104 @@ def detect_requested_datasets(question):
 
 
 def comparison_agent(state):
+    try:
+        question = (state.get("question") or "").lower()
 
-    question = state.get("question", "").lower()
+        datasets = detect_requested_datasets(question)
 
-    datasets = detect_requested_datasets(question)
+        if len(datasets) < 2:
 
-    if len(datasets) < 2:
+            state["answer"] = "Please specify at least two datasets to compare."
+            return state
 
-        state["answer"] = "Please specify at least two datasets to compare."
-        return state
+        dfs = {}
 
-    dfs = {}
+        for name in datasets:
 
-    for name in datasets:
+            url = DATASET_SOURCES[name]
 
-        url = DATASET_SOURCES[name]
+            try:
 
-        try:
+                df = load_dataset(url)
 
-            df = pd.read_csv(url)
+                year_column = next(
+                    (col for col in df.columns if col.lower() == "year"),
+                    None,
+                )
 
-            if "Year" not in df.columns:
+                if year_column is None:
+                    continue
+
+                df = df.groupby(year_column).mean(numeric_only=True).reset_index()
+                df = df.rename(columns={year_column: "year"})
+
+                if "value" not in [col.lower() for col in df.columns]:
+                    numeric_cols = [
+                        col for col in df.columns
+                        if col.lower() != "year"
+                        and pd.api.types.is_numeric_dtype(df[col])
+                    ]
+                    if not numeric_cols:
+                        continue
+                    df = df.rename(columns={numeric_cols[0]: name})
+                else:
+                    value_col = next(
+                        col for col in df.columns if col.lower() == "value"
+                    )
+                    df = df.rename(columns={value_col: name})
+
+                dfs[name] = df
+
+            except Exception:
+
                 continue
 
-            df = df.groupby("Year").mean(numeric_only=True).reset_index()
+        if len(dfs) < 2:
 
-            dfs[name] = df
+            state["answer"] = "Could not load enough datasets for comparison."
+            return state
 
-        except Exception:
+        merged = None
 
-            continue
+        for _, df in dfs.items():
+            if merged is None:
+                merged = df
+            else:
+                merged = pd.merge(merged, df, on="year", how="inner")
 
-    if len(dfs) < 2:
+        if merged is None or merged.empty:
+            state["answer"] = "Comparison failed because the datasets do not share overlapping years."
+            state["chart"] = None
+            return state
 
-        state["answer"] = "Could not load enough datasets for comparison."
-        return state
+        numeric_cols = [col for col in merged.columns if col != "year"]
 
-    merged = None
+        if len(numeric_cols) < 2:
 
-    for name, df in dfs.items():
+            state["answer"] = "Comparison failed due to missing numeric overlap."
+            return state
 
-        df = df.rename(columns={"Value": name})
+        x = numeric_cols[0]
+        y = numeric_cols[1]
 
-        if merged is None:
-            merged = df
+        corr = merged[x].corr(merged[y])
 
+        fig = px.scatter(merged, x=x, y=y)
+
+        state["chart"] = figure_to_json(fig)
+        state["chart_columns_used"] = [x, y]
+        state["rows"] = int(merged.shape[0])
+        state["columns"] = merged.columns.tolist()
+
+        if pd.isna(corr):
+            state["answer"] = f"Comparison chart created for {x} and {y}, but correlation could not be computed."
         else:
-            merged = pd.merge(merged, df, on="Year", how="inner")
+            state["answer"] = f"Correlation between {x} and {y} is {round(corr, 3)}"
 
-    numeric_cols = [col for col in merged.columns if col != "Year"]
-
-    if len(numeric_cols) < 2:
-
-        state["answer"] = "Comparison failed due to missing numeric overlap."
         return state
-
-    x = numeric_cols[0]
-    y = numeric_cols[1]
-
-    corr = merged[x].corr(merged[y])
-
-    fig = px.scatter(merged, x=x, y=y, trendline="ols")
-
-    state["chart"] = fig.to_dict()
-
-    state["answer"] = f"Correlation between {x} and {y} is {round(corr,3)}"
-
-    return state
+    except Exception as exc:
+        state["chart"] = None
+        state["chart_columns_used"] = []
+        state["answer"] = "Comparison failed."
+        state["error"] = f"Comparison failed: {exc}"
+        return state
