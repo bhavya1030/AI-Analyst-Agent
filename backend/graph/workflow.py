@@ -9,7 +9,7 @@ from backend.agents.viz_agent import viz_agent
 from backend.agents.qa_agent import qa_agent
 from backend.agents.insight_agent import insight_agent
 from backend.agents.dataset_profile_agent import dataset_profile_agent
-
+from backend.agents.recommendation_agent import recommendation_agent
 
 def router(state):
 
@@ -39,7 +39,8 @@ def build_graph():
     builder.add_node("run_viz", viz_agent)
     builder.add_node("run_qa", qa_agent)
     builder.add_node("generate_insight", insight_agent)
-    
+    builder.add_node("recommend_analysis", recommendation_agent)
+
     # Entry point
     builder.set_entry_point("planner")
 
@@ -81,11 +82,13 @@ def build_graph():
         },
     )
 
-    builder.add_edge("profile_data", "run_eda")
+    builder.add_edge("profile_data", "recommend_analysis")
+
+    builder.add_edge("recommend_analysis", "run_eda")
+
     builder.add_edge("run_eda", "generate_insight")
     builder.add_edge("run_viz", "generate_insight")
     builder.add_edge("run_qa", "generate_insight")
 
     builder.add_edge("generate_insight", END)
-
     return builder.compile()

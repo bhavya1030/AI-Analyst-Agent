@@ -156,24 +156,11 @@ def ask(
 
         result = graph.invoke(state)
 
-        df = result.get("data")
-
         dataset_path = None
 
-        # CASE 1: uploaded dataset
-        if df is not None and file_path:
-            dataset_path = file_path
-
-        # CASE 2: fetched dataset from web
-        elif result.get("dataset_url"):
-            dataset_path = result["dataset_url"]
-
-
-        # uploaded dataset
         if file_path:
             dataset_path = file_path
 
-        # fetched dataset
         elif result.get("dataset_url"):
             dataset_path = result["dataset_url"]
 
@@ -189,6 +176,7 @@ def ask(
             "answer": result.get("answer"),
             "insights": result.get("insights"),
             "dataset_profile": result.get("dataset_profile"),
+            "recommended_next_steps": result.get("recommended_next_steps", []),
             "chart": result.get("chart"),
             "dataset_url": result.get("dataset_url"),
             "dataset_topic": result.get("dataset_topic"),
