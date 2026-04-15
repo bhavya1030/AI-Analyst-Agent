@@ -71,6 +71,7 @@ def forecasting_agent(state):
         fig.add_scatter(x=forecast["ds"], y=forecast["yhat_lower"], mode="lines", line=dict(dash="dash"), name="Lower CI")
         fig.add_scatter(x=forecast["ds"], y=forecast["yhat_upper"], mode="lines", line=dict(dash="dash"), name="Upper CI")
         state["forecast_chart"] = figure_to_json(fig)
+        state["last_forecast_target"] = value_col
 
         state["last_chart_type"] = "forecast"
         state["last_columns_used"] = [time_col, value_col]

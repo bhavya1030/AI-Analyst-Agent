@@ -21,6 +21,18 @@ def _dedupe_plan(plan):
     return deduped
 
 
+def _has_time_series(profile):
+    return bool(profile.get("time_columns") and profile.get("numeric_columns"))
+
+
+def _has_correlation(profile):
+    return len(profile.get("numeric_columns", [])) >= 2
+
+
+def _has_category_analysis(profile):
+    return bool(profile.get("categorical_columns") and profile.get("numeric_columns"))
+
+
 def _detect_chart_type(question: str) -> str:
     if "heatmap" in question or "correlation" in question:
         return "heatmap"
@@ -28,9 +40,27 @@ def _detect_chart_type(question: str) -> str:
         return "scatter"
     if "line" in question or "trend" in question:
         return "line"
-    if "box" in question:
+    if "box" in question or "category" in question:
         return "box"
     return "visualization"
+
+
+def _plan_deep_analysis(state, profile, plan):
+    plan.extend([
+        "profile_data",
+        "recommend_analysis",
+        "dataset_topic_detection",
+        "pattern_detection",
+        "run_multi_viz",
+        "chart_interpretation",
+        "hypothesis_generation",
+    ])
+
+    if _has_time_series(profile):
+        plan.append("forecast_data")
+
+    state["last_operation"] = "deep_analysis"
+    state["last_chart_type"] = "multi"
 
 
 def planner_agent(state):
@@ -44,10 +74,6 @@ def planner_agent(state):
     print("DETECTED INTENTS:", intents)
 
     profile = state.get("dataset_profile") or {}
-    numeric_cols = profile.get("numeric_columns", [])
-    categorical_cols = profile.get("categorical_columns", [])
-    time_cols = profile.get("time_columns", [])
-
     plan = []
     state["last_intent"] = intents[0] if intents else None
     state["last_operation"] = None
@@ -60,45 +86,49 @@ def planner_agent(state):
             "pattern_detection",
         ])
 
-        if "explanation" in intents:
+        if "similar" in normalized:
+            plan.append("dataset_embedding_search")
+
+        if "visualization" in intents:
+            plan.append("run_viz")
+            state["last_chart_type"] = _detect_chart_type(normalized)
+            state["last_operation"] = "visualization"
+        elif "statistical_analysis" in intents:
+            plan.append("run_qa")
+            state["last_operation"] = "statistical_analysis"
+        elif "explanation" in intents:
             plan.append("explain_dataset")
             state["last_operation"] = "explain"
         else:
             plan.append("recommend_analysis")
             state["last_operation"] = "recommend"
 
-        if "visualization" in intents:
-            plan.append("run_viz")
-            state["last_chart_type"] = _detect_chart_type(normalized)
-        elif "statistical_analysis" in intents:
-            plan.append("run_qa")
-            state["last_operation"] = "statistical_analysis"
-        else:
-            plan.append("run_eda")
-            state["last_operation"] = "analyze"
-
         state["plan"] = _dedupe_plan(plan)
         return state
 
-    if "auto_analysis" in intents or "analyze dataset" in normalized:
+    if "auto_analysis" in intents or "analyze dataset" in normalized or "analyze deeply" in normalized:
         if _ensure_dataset_loaded(state, plan):
-            plan.extend([
-                "profile_data",
-                "recommend_analysis",
-                "dataset_topic_detection",
-                "pattern_detection",
-                "run_eda",
-                "run_multi_viz",
-            ])
+            if "deeply" in normalized or "deep analysis" in normalized or "analyze deeply" in normalized:
+                _plan_deep_analysis(state, profile, plan)
+            else:
+                plan.extend([
+                    "profile_data",
+                    "recommend_analysis",
+                    "dataset_topic_detection",
+                    "pattern_detection",
+                    "run_eda",
+                    "run_viz",
+                    "chart_interpretation",
+                    "hypothesis_generation",
+                ])
+                if "forecast" in normalized or _has_time_series(profile):
+                    plan.append("forecast_data")
+                state["last_operation"] = "analyze"
+                state["last_chart_type"] = "multi"
 
-            if "statistical_analysis" in intents:
+            if "statistical_analysis" in intents and "run_qa" not in plan:
                 plan.append("run_qa")
 
-            if "explanation" in intents:
-                plan.insert(plan.index("run_eda"), "explain_dataset")
-
-            state["last_operation"] = "analyze"
-            state["last_chart_type"] = "multi"
             state["plan"] = _dedupe_plan(plan)
             return state
 
@@ -111,7 +141,8 @@ def planner_agent(state):
             plan.extend([
                 "profile_data",
                 "forecast_data",
-                "generate_insight",
+                "chart_interpretation",
+                "hypothesis_generation",
             ])
             state["last_operation"] = "forecast"
             state["last_chart_type"] = "forecast"
@@ -129,6 +160,8 @@ def planner_agent(state):
                 "dataset_topic_detection",
                 "pattern_detection",
                 "compare_datasets",
+                "chart_interpretation",
+                "hypothesis_generation",
             ])
             state["last_operation"] = "compare"
             state["plan"] = _dedupe_plan(plan)
@@ -156,6 +189,8 @@ def planner_agent(state):
                 "dataset_topic_detection",
                 "pattern_detection",
                 "explain_dataset",
+                "chart_interpretation",
+                "hypothesis_generation",
             ])
             if "visualization" in intents:
                 plan.append("run_viz")
@@ -177,6 +212,7 @@ def planner_agent(state):
                 "dataset_topic_detection",
                 "pattern_detection",
                 "run_viz",
+                "chart_interpretation",
             ])
             state["last_operation"] = "visualization"
             state["last_chart_type"] = _detect_chart_type(normalized)
@@ -194,6 +230,7 @@ def planner_agent(state):
                 "dataset_topic_detection",
                 "pattern_detection",
                 "run_qa",
+                "hypothesis_generation",
             ])
             state["last_operation"] = "statistical_analysis"
             state["plan"] = _dedupe_plan(plan)
@@ -210,6 +247,8 @@ def planner_agent(state):
             "dataset_topic_detection",
             "pattern_detection",
             "run_eda",
+            "chart_interpretation",
+            "hypothesis_generation",
         ])
         state["last_operation"] = "analyze"
         state["plan"] = _dedupe_plan(plan)

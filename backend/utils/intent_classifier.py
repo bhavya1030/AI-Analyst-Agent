@@ -10,6 +10,7 @@ def classify_intents(question: str):
         "download dataset",
         "dataset about",
         "get dataset",
+        "similar dataset",
     ]
 
     viz_keywords = [
@@ -67,7 +68,10 @@ def classify_intents(question: str):
         "explore data",
         "summarize dataset",
         "summarize data",
-        "study dataset"
+        "study dataset",
+        "deeply",
+        "deep analysis",
+        "analyze deeply",
     ]
 
     forecasting_keywords = [

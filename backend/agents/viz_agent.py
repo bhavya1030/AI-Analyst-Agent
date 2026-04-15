@@ -106,11 +106,15 @@ def viz_agent(state):
         profile = state.get("dataset_profile", {})
         last_column = state.get("last_column_used")
         last_columns = state.get("last_columns_used") or []
+        deep_mode = "deeply" in question or state.get("last_operation") == "deep_analysis"
 
         if df is None:
             state["chart"] = None
             state["chart_columns_used"] = []
             return state
+
+        if deep_mode:
+            return run_multi_viz_agent(state)
 
         numeric_cols = df.select_dtypes(include="number").columns.tolist()
         categorical_cols = df.select_dtypes(exclude="number").columns.tolist()

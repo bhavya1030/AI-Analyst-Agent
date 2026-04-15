@@ -16,6 +16,9 @@ from backend.agents.recommendation_agent import recommendation_agent
 from backend.agents.dataset_insight_agent import dataset_insight_agent
 from backend.agents.comparison_agent import comparison_agent
 from backend.agents.forecasting_agent import forecasting_agent
+from backend.agents.chart_interpretation_agent import chart_interpretation_agent
+from backend.agents.hypothesis_agent import hypothesis_agent
+from backend.agents.dataset_embedding_search_agent import dataset_embedding_search_agent
 
 ROUTE_MAP = {
     "load_data": "load_data",
@@ -31,6 +34,9 @@ ROUTE_MAP = {
     "run_multi_viz": "run_multi_viz",
     "run_qa": "run_qa",
     "forecast_data": "forecast_data",
+    "chart_interpretation": "chart_interpretation",
+    "hypothesis_generation": "hypothesis_generation",
+    "dataset_embedding_search": "dataset_embedding_search",
     "compare_datasets": "compare_datasets",
     "generate_insight": "generate_insight",
 }
@@ -96,6 +102,10 @@ def build_graph():
         "explain_dataset",
         _wrap_agent("explain_dataset", dataset_insight_agent),
     )
+    builder.add_node(
+        "dataset_embedding_search",
+        _wrap_agent("dataset_embedding_search", dataset_embedding_search_agent),
+    )
 
     builder.add_node("clean_data", _wrap_agent("clean_data", cleaning_agent))
 
@@ -104,6 +114,14 @@ def build_graph():
     builder.add_node("run_multi_viz", _wrap_agent("run_multi_viz", run_multi_viz_agent))
     builder.add_node("run_qa", _wrap_agent("run_qa", qa_agent))
     builder.add_node("forecast_data", _wrap_agent("forecast_data", forecasting_agent))
+    builder.add_node(
+        "chart_interpretation",
+        _wrap_agent("chart_interpretation", chart_interpretation_agent),
+    )
+    builder.add_node(
+        "hypothesis_generation",
+        _wrap_agent("hypothesis_generation", hypothesis_agent),
+    )
 
     builder.add_node(
         "compare_datasets",
@@ -128,12 +146,15 @@ def build_graph():
         "dataset_topic_detection",
         "pattern_detection",
         "explain_dataset",
+        "dataset_embedding_search",
         "clean_data",
         "run_eda",
         "run_viz",
         "run_multi_viz",
         "run_qa",
         "forecast_data",
+        "chart_interpretation",
+        "hypothesis_generation",
     ]:
         builder.add_conditional_edges(node_name, router, ROUTE_MAP)
 

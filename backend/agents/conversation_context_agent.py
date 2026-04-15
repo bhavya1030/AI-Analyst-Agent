@@ -13,6 +13,9 @@ FOLLOW_UP_MAPPINGS = {
     "compare that": "compare {subject} with another variable",
     "compare this": "compare {subject} with another variable",
     "show correlation instead": "show correlation heatmap",
+    "forecast instead": "predict next 10 years {subject}",
+    "forecast that": "predict next 10 years {subject}",
+    "forecast this": "predict next 10 years {subject}",
     "instead correlation": "show correlation heatmap",
 }
 
@@ -50,6 +53,9 @@ def conversation_context_agent(state):
     intents = classify_intents(lowered)
     if intents:
         state["last_intent"] = intents[0]
+
+    if "forecasting" in intents or "forecast" in lowered:
+        state["last_forecast_target"] = subject
 
     if "visualization" in intents:
         state["last_operation"] = "visualization"
