@@ -71,15 +71,21 @@ def _build_state(session, question=None, file_path=None):
         "last_dataset": dataset,
         "last_column_used": getattr(session, "last_column", None),
         "last_columns_used": getattr(session, "last_columns", None) or [],
+        "last_chart_type": getattr(session, "last_chart_type", None),
+        "last_intent": getattr(session, "last_intent", None),
+        "last_operation": getattr(session, "last_operation", None),
         "cleaned": False,
         "insights": [],
         "question": question,
         "answer": None,
         "chart": None,
+        "charts": [],
         "plan": [],
         "dataset_profile": {},
         "dataset_explanation": [],
         "recommended_next_steps": [],
+        "detected_patterns": [],
+        "dataset_topic": None,
         "chart_columns_used": [],
         "rows": int(dataset.shape[0]) if dataset is not None else 0,
         "columns": dataset.columns.tolist() if dataset is not None else [],
@@ -88,19 +94,28 @@ def _build_state(session, question=None, file_path=None):
 
 
 def _stable_response(result, question=None):
+    dataset_profile = result.get("dataset_profile") or {}
+    charts = result.get("charts") or []
+    if not charts and result.get("chart") is not None:
+        charts = [result.get("chart")]
+
     payload = {
         "question": question,
         "answer": result.get("answer"),
-        "insights": result.get("insights") or [],
-        "dataset_profile": result.get("dataset_profile") or {},
-        "dataset_explanation": result.get("dataset_explanation") or [],
-        "recommended_next_steps": result.get("recommended_next_steps") or [],
-        "chart": result.get("chart"),
-        "dataset_url": result.get("dataset_url"),
+        "dataset_summary": dataset_profile,
         "dataset_topic": result.get("dataset_topic"),
+        "recommended_analysis": dataset_profile.get("recommended_analyses") or [],
+        "generated_charts": charts,
+        "chart": result.get("chart"),
+        "chart_columns_used": result.get("chart_columns_used") or [],
+        "detected_patterns": result.get("detected_patterns") or [],
+        "insights": result.get("insights") or [],
+        "recommended_next_steps": result.get("recommended_next_steps") or [],
+        "dataset_explanation": result.get("dataset_explanation") or [],
+        "dataset_url": result.get("dataset_url"),
         "rows": result.get("rows") or 0,
         "columns": result.get("columns") or [],
-        "chart_columns_used": result.get("chart_columns_used") or [],
+        "dataset_topic": result.get("dataset_topic"),
         "error": result.get("error"),
     }
     return make_json_safe(payload)
@@ -160,6 +175,15 @@ def analyze(session_id: str = "default"):
                 ),
             )
 
+        save_session(
+            session_id=session_id,
+            last_column=result.get("last_column_used"),
+            last_columns=result.get("last_columns_used") or [],
+            last_chart_type=result.get("last_chart_type"),
+            last_intent=result.get("last_intent"),
+            last_operation=result.get("last_operation"),
+        )
+
         return _stable_response(result)
     except Exception as exc:
         return JSONResponse(
@@ -194,6 +218,9 @@ def ask(
         save_kwargs = {
             "last_column": result.get("last_column_used"),
             "last_columns": result.get("last_columns_used") or [],
+            "last_chart_type": result.get("last_chart_type"),
+            "last_intent": result.get("last_intent"),
+            "last_operation": result.get("last_operation"),
             "last_query": question,
             "last_insight": result.get("answer"),
             "eda_summary": result.get("dataset_profile") or {},

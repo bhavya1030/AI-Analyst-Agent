@@ -4,8 +4,11 @@ from backend.agents.planner_agent import planner_agent
 from backend.agents.data_agent import data_agent
 from backend.agents.data_engineer_agent import data_engineer_agent
 from backend.agents.cleaning_agent import cleaning_agent
+from backend.agents.conversation_context_agent import conversation_context_agent
+from backend.agents.dataset_topic_agent import dataset_topic_agent
+from backend.agents.pattern_detection_agent import pattern_detection_agent
 from backend.agents.eda_agent import eda_agent
-from backend.agents.viz_agent import viz_agent
+from backend.agents.viz_agent import viz_agent, run_multi_viz_agent
 from backend.agents.qa_agent import qa_agent
 from backend.agents.insight_agent import insight_agent
 from backend.agents.dataset_profile_agent import dataset_profile_agent
@@ -18,10 +21,13 @@ ROUTE_MAP = {
     "fetch_data": "fetch_data",
     "profile_data": "profile_data",
     "recommend_analysis": "recommend_analysis",
+    "dataset_topic_detection": "dataset_topic_detection",
+    "pattern_detection": "pattern_detection",
     "explain_dataset": "explain_dataset",
     "clean_data": "clean_data",
     "run_eda": "run_eda",
     "run_viz": "run_viz",
+    "run_multi_viz": "run_multi_viz",
     "run_qa": "run_qa",
     "compare_datasets": "compare_datasets",
     "generate_insight": "generate_insight",
@@ -65,6 +71,7 @@ def build_graph():
     # REGISTER NODES
     # -------------------------
 
+    builder.add_node("conversation_context", conversation_context_agent)
     builder.add_node("planner", planner_agent)
 
     builder.add_node("load_data", _wrap_agent("load_data", data_agent))
@@ -76,6 +83,14 @@ def build_graph():
         _wrap_agent("recommend_analysis", recommendation_agent),
     )
     builder.add_node(
+        "dataset_topic_detection",
+        _wrap_agent("dataset_topic_detection", dataset_topic_agent),
+    )
+    builder.add_node(
+        "pattern_detection",
+        _wrap_agent("pattern_detection", pattern_detection_agent),
+    )
+    builder.add_node(
         "explain_dataset",
         _wrap_agent("explain_dataset", dataset_insight_agent),
     )
@@ -84,6 +99,7 @@ def build_graph():
 
     builder.add_node("run_eda", _wrap_agent("run_eda", eda_agent))
     builder.add_node("run_viz", _wrap_agent("run_viz", viz_agent))
+    builder.add_node("run_multi_viz", _wrap_agent("run_multi_viz", run_multi_viz_agent))
     builder.add_node("run_qa", _wrap_agent("run_qa", qa_agent))
 
     builder.add_node(
@@ -97,7 +113,8 @@ def build_graph():
     # ENTRY POINT
     # -------------------------
 
-    builder.set_entry_point("planner")
+    builder.set_entry_point("conversation_context")
+    builder.add_edge("conversation_context", "planner")
 
     for node_name in [
         "planner",
@@ -105,10 +122,13 @@ def build_graph():
         "fetch_data",
         "profile_data",
         "recommend_analysis",
+        "dataset_topic_detection",
+        "pattern_detection",
         "explain_dataset",
         "clean_data",
         "run_eda",
         "run_viz",
+        "run_multi_viz",
         "run_qa",
     ]:
         builder.add_conditional_edges(node_name, router, ROUTE_MAP)
