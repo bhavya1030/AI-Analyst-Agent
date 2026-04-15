@@ -15,6 +15,7 @@ from backend.agents.dataset_profile_agent import dataset_profile_agent
 from backend.agents.recommendation_agent import recommendation_agent
 from backend.agents.dataset_insight_agent import dataset_insight_agent
 from backend.agents.comparison_agent import comparison_agent
+from backend.agents.forecasting_agent import forecasting_agent
 
 ROUTE_MAP = {
     "load_data": "load_data",
@@ -29,6 +30,7 @@ ROUTE_MAP = {
     "run_viz": "run_viz",
     "run_multi_viz": "run_multi_viz",
     "run_qa": "run_qa",
+    "forecast_data": "forecast_data",
     "compare_datasets": "compare_datasets",
     "generate_insight": "generate_insight",
 }
@@ -101,6 +103,7 @@ def build_graph():
     builder.add_node("run_viz", _wrap_agent("run_viz", viz_agent))
     builder.add_node("run_multi_viz", _wrap_agent("run_multi_viz", run_multi_viz_agent))
     builder.add_node("run_qa", _wrap_agent("run_qa", qa_agent))
+    builder.add_node("forecast_data", _wrap_agent("forecast_data", forecasting_agent))
 
     builder.add_node(
         "compare_datasets",
@@ -130,6 +133,7 @@ def build_graph():
         "run_viz",
         "run_multi_viz",
         "run_qa",
+        "forecast_data",
     ]:
         builder.add_conditional_edges(node_name, router, ROUTE_MAP)
 

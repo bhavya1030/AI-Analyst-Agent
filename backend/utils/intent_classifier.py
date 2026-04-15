@@ -70,6 +70,20 @@ def classify_intents(question: str):
         "study dataset"
     ]
 
+    forecasting_keywords = [
+        "predict",
+        "forecast",
+        "future",
+        "projection",
+        "estimate next",
+        "future trend",
+        "next years",
+        "next year",
+        "next 5 years",
+        "next 10 years",
+        "project future",
+    ]
+
     cleaning_keywords = [
         "clean",
         "missing values",
@@ -96,6 +110,9 @@ def classify_intents(question: str):
 
     if any(k in question for k in auto_analysis_keywords):
         intents.append("auto_analysis")
+
+    if any(k in question for k in forecasting_keywords):
+        intents.append("forecasting")
 
     if any(k in question for k in cleaning_keywords):
         intents.append("cleaning")
