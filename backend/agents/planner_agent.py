@@ -106,6 +106,22 @@ def planner_agent(state):
         state["stop"] = True
         return state
 
+    if "forecasting" in intents:
+        if _ensure_dataset_loaded(state, plan):
+            plan.extend([
+                "profile_data",
+                "forecast_data",
+                "generate_insight",
+            ])
+            state["last_operation"] = "forecast"
+            state["last_chart_type"] = "forecast"
+            state["plan"] = _dedupe_plan(plan)
+            return state
+
+        state["answer"] = "Please load or fetch a dataset first."
+        state["stop"] = True
+        return state
+
     if "comparison" in intents:
         if _ensure_dataset_loaded(state, plan):
             plan.extend([

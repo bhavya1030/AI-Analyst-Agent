@@ -1,5 +1,13 @@
 def insight_agent(state):
 
+    if state.get("forecast"):
+        if state.get("answer"):
+            state["answer"] = f"{state['answer']} Forecast generated using Prophet time-series model."
+        else:
+            state["answer"] = "Forecast generated using Prophet time-series model."
+        state["forecast_chart"] = state.get("forecast_chart")
+        return state
+
     # If QA already produced an answer, do NOT overwrite it
     if state.get("answer") is not None:
         return state
