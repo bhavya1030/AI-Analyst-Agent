@@ -24,6 +24,7 @@ class SessionMemory(Base):
     last_chart_type = Column(String)
     last_intent = Column(String)
     last_operation = Column(String)
+    last_forecast_target = Column(String)
     eda_summary = Column(JSON)
     last_insight = Column(Text)
     last_columns = Column(JSON)
@@ -37,6 +38,7 @@ EXPECTED_COLUMNS = {
     "last_chart_type": "VARCHAR",
     "last_intent": "VARCHAR",
     "last_operation": "VARCHAR",
+    "last_forecast_target": "VARCHAR",
     "eda_summary": "JSON",
     "last_insight": "TEXT",
     "last_columns": "JSON",
@@ -96,6 +98,7 @@ def save_session(
     last_chart_type=_UNSET,
     last_intent=_UNSET,
     last_operation=_UNSET,
+    last_forecast_target=_UNSET,
     eda_summary=_UNSET,
     last_insight=_UNSET,
     last_columns=_UNSET,
@@ -121,6 +124,7 @@ def save_session(
         "last_chart_type": last_chart_type,
         "last_intent": last_intent,
         "last_operation": last_operation,
+        "last_forecast_target": last_forecast_target,
         "eda_summary": eda_summary,
         "last_insight": last_insight,
         "last_columns": last_columns,

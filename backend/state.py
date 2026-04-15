@@ -23,8 +23,12 @@ class AnalystState(TypedDict, total=False):
     last_chart_type: Optional[str]
     last_intent: Optional[str]
     last_operation: Optional[str]
+    last_forecast_target: Optional[str]
     chart_columns_used: list[str]
     charts: list[dict[str, Any]]
+    chart_explanation: Optional[str]
+    hypotheses: list[str]
+    related_datasets: list[dict[str, Any]]
     rows: int
     columns: list[str]
     error: Optional[str]
