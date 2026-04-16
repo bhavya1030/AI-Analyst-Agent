@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 
 from backend.config import settings
 from backend.core.logger import get_logger
-from backend.db import get_session, save_session
+from backend.db import get_session, list_sessions, save_session
 from backend.graph.workflow import build_graph
 from backend.utils.dataset_loader import load_dataset
 from backend.utils.json_safe import sanitize_for_json
@@ -309,4 +309,19 @@ def ask(
                 "error": "Pipeline execution failed",
                 "details": str(exc),
             },
+        )
+
+
+@app.get("/sessions")
+def sessions():
+    try:
+        return list_sessions()
+    except Exception as exc:
+        logger.error(
+            "Failed to load session list",
+            extra={"action": "sessions", "error": str(exc)},
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Unable to retrieve sessions"},
         )

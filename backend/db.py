@@ -89,6 +89,13 @@ def get_session(session_id):
     return session
 
 
+def list_sessions():
+    db = SessionLocal()
+    session_ids = [session.session_id for session in db.query(SessionMemory.session_id).all()]
+    db.close()
+    return session_ids
+
+
 def save_session(
     session_id,
     dataset_path=_UNSET,
