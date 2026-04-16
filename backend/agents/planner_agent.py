@@ -1,4 +1,28 @@
+from backend.core.logger import get_logger
 from backend.utils.intent_classifier import classify_intents
+
+logger = get_logger(__name__)
+
+VALID_PLANNER_NODES = {
+    "load_data",
+    "fetch_data",
+    "profile_data",
+    "recommend_analysis",
+    "dataset_topic_detection",
+    "pattern_detection",
+    "explain_dataset",
+    "clean_data",
+    "run_eda",
+    "run_viz",
+    "run_multi_viz",
+    "run_qa",
+    "forecast_data",
+    "chart_interpretation",
+    "hypothesis_generation",
+    "dataset_embedding_search",
+    "compare_datasets",
+    "generate_insight",
+}
 
 
 def _ensure_dataset_loaded(state, plan):
@@ -14,11 +38,31 @@ def _ensure_dataset_loaded(state, plan):
 
 
 def _dedupe_plan(plan):
+    validated_plan = _validate_plan(plan)
     deduped = []
-    for step in plan:
+    for step in validated_plan:
         if step not in deduped:
             deduped.append(step)
+
+    if not deduped and plan:
+        logger.warning(
+            "Planner fallback to generate_insight",
+            extra={"original_plan": plan},
+        )
+        deduped = ["generate_insight"]
+
     return deduped
+
+
+def _validate_plan(plan):
+    validated = [step for step in plan if step in VALID_PLANNER_NODES]
+    invalid = [step for step in plan if step not in VALID_PLANNER_NODES]
+    if invalid:
+        logger.warning(
+            "Planner removed invalid plan nodes",
+            extra={"invalid_nodes": invalid, "plan": plan},
+        )
+    return validated
 
 
 def _has_time_series(profile):
@@ -67,11 +111,17 @@ def planner_agent(state):
     question = (state.get("question") or "").strip()
     normalized = question.lower()
 
-    print("PLANNER RECEIVED QUESTION:", question)
+    logger.info(
+        "Planner received question",
+        extra={"action": "plan", "question": question, "dataset": state.get("dataset_url") or state.get("file_path")},
+    )
 
     intents = classify_intents(normalized)
 
-    print("DETECTED INTENTS:", intents)
+    logger.info(
+        "Planner detected intents",
+        extra={"action": "plan", "intents": intents},
+    )
 
     profile = state.get("dataset_profile") or {}
     plan = []

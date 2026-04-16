@@ -1,7 +1,10 @@
 from langgraph.graph import StateGraph, END
 
+from backend.core.logger import get_logger
 from backend.agents.planner_agent import planner_agent
 from backend.agents.data_agent import data_agent
+
+logger = get_logger(__name__)
 from backend.agents.data_engineer_agent import data_engineer_agent
 from backend.agents.cleaning_agent import cleaning_agent
 from backend.agents.conversation_context_agent import conversation_context_agent
@@ -41,6 +44,44 @@ ROUTE_MAP = {
     "generate_insight": "generate_insight",
 }
 
+REGISTERED_NODES = {
+    "conversation_context",
+    "planner",
+    "load_data",
+    "fetch_data",
+    "profile_data",
+    "recommend_analysis",
+    "dataset_topic_detection",
+    "pattern_detection",
+    "explain_dataset",
+    "dataset_embedding_search",
+    "clean_data",
+    "run_eda",
+    "run_viz",
+    "run_multi_viz",
+    "run_qa",
+    "forecast_data",
+    "chart_interpretation",
+    "hypothesis_generation",
+    "compare_datasets",
+    "generate_insight",
+}
+
+VALID_ROUTE_MAP = {
+    key: target
+    for key, target in ROUTE_MAP.items()
+    if target in REGISTERED_NODES
+}
+
+invalid_route_entries = [
+    key for key, target in ROUTE_MAP.items() if target not in REGISTERED_NODES
+]
+if invalid_route_entries:
+    logger.warning(
+        "Workflow route map contains invalid node targets",
+        extra={"invalid_route_keys": invalid_route_entries},
+    )
+
 
 def _wrap_agent(node_name, agent):
     def _runner(state):
@@ -61,13 +102,25 @@ def router(state):
     plan = list(state.get("plan") or [])
 
     if not plan:
+        logger.info(
+            "Router selected terminal node",
+            extra={"action": "router", "plan": plan},
+        )
         return "generate_insight"
 
     next_node = plan[0]
+    logger.info(
+        "Router selected next node",
+        extra={"action": "router", "next_node": next_node, "plan": plan},
+    )
 
-    if next_node in ROUTE_MAP:
+    if next_node in VALID_ROUTE_MAP:
         return next_node
 
+    logger.warning(
+        "Router found invalid next node, falling back",
+        extra={"next_node": next_node, "plan": plan},
+    )
     return "generate_insight"
 
 
@@ -156,7 +209,7 @@ def build_graph():
         "chart_interpretation",
         "hypothesis_generation",
     ]:
-        builder.add_conditional_edges(node_name, router, ROUTE_MAP)
+        builder.add_conditional_edges(node_name, router, VALID_ROUTE_MAP)
 
     # -------------------------
     # AFTER COMPARISON AGENT

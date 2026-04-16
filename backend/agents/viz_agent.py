@@ -1,6 +1,8 @@
 import plotly.express as px
 import plotly.figure_factory as ff
 
+from backend.core.logger import get_logger
+from backend.errors.error_types import VISUALIZATION_FAILED
 from backend.utils.column_semantic_mapper import map_column_reference
 from backend.utils.json_safe import figure_to_json
 
@@ -8,6 +10,8 @@ try:
     from rapidfuzz import process
 except ImportError:  # pragma: no cover
     process = None
+
+logger = get_logger(__name__)
 
 
 def best_column_match(text, columns, last_column=None):
@@ -96,6 +100,14 @@ def run_multi_viz_agent(state):
     state["last_columns_used"] = state["chart_columns_used"]
     state["rows"] = int(df.shape[0])
     state["columns"] = df.columns.tolist()
+    logger.info(
+        "Multi visualization generated",
+        extra={
+            "action": "run_multi_viz",
+            "dataset": state.get("dataset_url") or state.get("file_path"),
+            "chart_count": len(charts),
+        },
+    )
     return state
 
 
@@ -111,6 +123,8 @@ def viz_agent(state):
         if df is None:
             state["chart"] = None
             state["chart_columns_used"] = []
+            state["chart_error"] = "No data available for visualization."
+            state["error_type"] = VISUALIZATION_FAILED
             return state
 
         if deep_mode:
@@ -194,6 +208,15 @@ def viz_agent(state):
             state["last_chart_type"] = chart_type
             state["rows"] = int(df.shape[0])
             state["columns"] = df.columns.tolist()
+            logger.info(
+                "Visualization generated",
+                extra={
+                    "action": "run_viz",
+                    "dataset": state.get("dataset_url") or state.get("file_path"),
+                    "chart_type": chart_type,
+                    "columns": used_cols,
+                },
+            )
         else:
             state["chart"] = None
             state["chart_columns_used"] = []
@@ -202,5 +225,10 @@ def viz_agent(state):
     except Exception as exc:
         state["chart"] = None
         state["chart_columns_used"] = []
-        state["error"] = f"Visualization failed: {exc}"
+        state["chart_error"] = f"Visualization failed: {exc}"
+        state["error_type"] = VISUALIZATION_FAILED
+        logger.error(
+            "Visualization failed",
+            extra={"action": "run_viz", "error": str(exc)},
+        )
         return state

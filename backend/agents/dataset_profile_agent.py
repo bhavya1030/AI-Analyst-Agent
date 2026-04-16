@@ -1,5 +1,10 @@
 import pandas as pd
 
+from backend.cache.dataset_cache import get_profile, set_profile
+from backend.core.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 def _is_time_column(df, column_name):
     column = df[column_name]
@@ -35,6 +40,19 @@ def dataset_profile_agent(state):
     if df is None:
         state["dataset_profile"] = {}
         return state
+
+    reference = state.get("dataset_url") or state.get("file_path")
+    if reference:
+        cached_profile = get_profile(reference)
+        if cached_profile is not None:
+            logger.info(
+                "Dataset profile served from cache",
+                extra={"action": "profile_data", "dataset": reference},
+            )
+            state["dataset_profile"] = cached_profile
+            state["rows"] = int(df.shape[0])
+            state["columns"] = df.columns.tolist()
+            return state
 
     profile = {}
 
@@ -99,5 +117,12 @@ def dataset_profile_agent(state):
     state["dataset_profile"] = profile
     state["rows"] = int(df.shape[0])
     state["columns"] = df.columns.tolist()
+
+    if reference:
+        set_profile(reference, profile)
+        logger.info(
+            "Dataset profile cached",
+            extra={"action": "profile_data", "dataset": reference},
+        )
 
     return state

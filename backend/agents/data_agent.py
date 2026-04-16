@@ -1,3 +1,4 @@
+from backend.errors.error_types import DATASET_LOAD_FAILED
 from backend.utils.dataset_loader import load_dataset
 
 
@@ -13,6 +14,7 @@ def data_agent(state):
         df = load_dataset(file_path)
     except Exception as exc:
         state["error"] = f"Dataset loading failed: {exc}"
+        state["error_type"] = DATASET_LOAD_FAILED
         state["data"] = None
         return state
 
