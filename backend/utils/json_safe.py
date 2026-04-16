@@ -56,5 +56,9 @@ def make_json_safe(value):
         return str(value)
 
 
+def sanitize_for_json(obj):
+    return make_json_safe(obj)
+
+
 def figure_to_json(fig):
     return json.loads(fig.to_json())

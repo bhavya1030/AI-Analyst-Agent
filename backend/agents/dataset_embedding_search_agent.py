@@ -1,43 +1,8 @@
 from typing import List
 
-DATASET_CATALOG = [
-    {
-        "title": "World Bank GDP by Country",
-        "description": "Annual GDP values for countries from World Bank datasets, suitable for trend and growth analysis.",
-        "source": "World Bank",
-        "url": "https://data.worldbank.org/indicator/NY.GDP.MKTP.CD",
-    },
-    {
-        "title": "World Bank Population by Country",
-        "description": "Country-level population totals for demographic and growth analyses.",
-        "source": "World Bank",
-        "url": "https://data.worldbank.org/indicator/SP.POP.TOTL",
-    },
-    {
-        "title": "US GDP Components Dataset",
-        "description": "Gross domestic product breakdown by expenditure components from Data.gov.",
-        "source": "Data.gov",
-        "url": "https://catalog.data.gov/dataset/us-gdp-components",
-    },
-    {
-        "title": "Global Inflation Rates",
-        "description": "Inflation statistics for countries worldwide, useful for macroeconomic comparisons.",
-        "source": "Data.gov",
-        "url": "https://catalog.data.gov/dataset/global-inflation-rates",
-    },
-    {
-        "title": "GitHub Public CSV of GDP Growth",
-        "description": "Community-maintained CSV repository with GDP growth metrics and country-level historical values.",
-        "source": "GitHub",
-        "url": "https://github.com/datasets/gdp",
-    },
-    {
-        "title": "GitHub CSV of India GDP Growth",
-        "description": "Country-specific GDP growth dataset for India sourced from open data repositories.",
-        "source": "GitHub",
-        "url": "https://github.com/datasets/gdp/tree/main/data",
-    },
-]
+from backend.config import settings
+
+DATASET_CATALOG = settings.DATASET_CATALOG
 
 
 def _score_query(query: str, text: str) -> int:

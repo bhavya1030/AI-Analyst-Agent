@@ -1,15 +1,15 @@
 import pandas as pd
 import plotly.express as px
 
+from backend.config import settings
+from backend.core.logger import get_logger
+from backend.errors.error_types import COMPARISON_FAILED
 from backend.utils.dataset_loader import load_dataset
 from backend.utils.json_safe import figure_to_json
 
+logger = get_logger(__name__)
 
-DATASET_SOURCES = {
-    "gdp": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
-    "population": "https://raw.githubusercontent.com/datasets/population/master/data/population.csv",
-    "inflation": "https://raw.githubusercontent.com/datasets/inflation/master/data/cpi.csv"
-}
+DATASET_SOURCES = settings.DATASET_SOURCES
 
 
 def detect_requested_datasets(question):
@@ -127,4 +127,9 @@ def comparison_agent(state):
         state["chart_columns_used"] = []
         state["answer"] = "Comparison failed."
         state["error"] = f"Comparison failed: {exc}"
+        state["error_type"] = COMPARISON_FAILED
+        logger.error(
+            "Comparison failed",
+            extra={"action": "compare_datasets", "error": str(exc)},
+        )
         return state

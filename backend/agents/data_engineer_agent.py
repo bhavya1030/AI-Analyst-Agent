@@ -1,8 +1,15 @@
+from backend.core.logger import get_logger
+from backend.errors.error_types import DATASET_NOT_FOUND, DATASET_LOAD_FAILED
 from backend.utils.dataset_loader import load_dataset
+
+logger = get_logger(__name__)
 
 
 def data_engineer_agent(state):
-    print("DATA ENGINEER AGENT EXECUTING")
+    logger.info(
+        "Data engineer agent executing",
+        extra={"action": "fetch_data", "question": state.get("question")},
+    )
 
     question = (state.get("question") or "").lower()
     dataset_map = {
@@ -37,9 +44,13 @@ def data_engineer_agent(state):
 
     if selected_url is None:
         state["error"] = "No matching dataset found."
+        state["error_type"] = DATASET_NOT_FOUND
         return state
 
-    print("LOADING DATASET:", selected_url)
+    logger.info(
+        "Loading dataset",
+        extra={"action": "fetch_data", "dataset": selected_url},
+    )
 
     try:
         df = load_dataset(selected_url)
@@ -50,10 +61,18 @@ def data_engineer_agent(state):
         state["dataset_topic"] = selected_topic or "dataset discovery"
         state["source"] = "dataset_discovery"
         state.pop("error", None)
-        print("DATASET LOADED SUCCESSFULLY")
+        state["error_type"] = None
+        logger.info(
+            "Dataset loaded successfully",
+            extra={"action": "fetch_data", "dataset": selected_url, "rows": int(df.shape[0])},
+        )
     except Exception as e:
         state["error"] = f"Dataset loading failed: {str(e)}"
+        state["error_type"] = DATASET_LOAD_FAILED
         state["data"] = None
-        print("DATASET FAILED:", str(e))
+        logger.error(
+            "Dataset loading failed",
+            extra={"action": "fetch_data", "dataset": selected_url, "error": str(e)},
+        )
 
     return state
