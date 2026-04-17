@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.config import settings
@@ -17,6 +18,13 @@ from backend.utils.json_safe import sanitize_for_json
 load_dotenv()
 
 app = FastAPI(title="AI Analyst Agent API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 graph = build_graph()
 logger = get_logger(__name__)
 

@@ -27,7 +27,9 @@ export default function ChatInput() {
     addMessage(userMessage);
 
     try {
+      console.log("Sending ChatInput question", { text, sessionId });
       const payload = await askQuestion(text, sessionId);
+      console.log("ChatInput received payload", payload);
       const assistantMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
         role: "assistant",
@@ -49,7 +51,8 @@ export default function ChatInput() {
         setDatasetName(payload.dataset_topic);
       }
     } catch (err) {
-      setError("The backend is unreachable. Please check your connection.");
+      console.error("ChatInput error sending question", err);
+      setError("The backend is unreachable. Please ensure the API server is running at http://localhost:8000.");
     } finally {
       setLoading(false);
       setPrompt("");

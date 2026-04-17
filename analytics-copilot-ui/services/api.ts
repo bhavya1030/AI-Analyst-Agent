@@ -3,9 +3,6 @@ import { AssistantResponse, UploadResponse } from "@/types";
 
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000",
-  headers: {
-    "Content-Type": "application/json",
-  },
 });
 
 export async function askQuestion(question: string, sessionId: string, filePath?: string) {
