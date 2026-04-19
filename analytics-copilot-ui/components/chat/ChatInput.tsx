@@ -75,7 +75,7 @@ export default function ChatInput() {
             id="question"
             rows={3}
             className="min-h-[96px] flex-1 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-sky-400 dark:focus:ring-sky-900"
-            placeholder='Upload a dataset first, then ask a question like "What are the most interesting correlations?"'
+            placeholder='Ask a question like "analyze GDP trends" or upload a dataset for custom analysis'
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             disabled={loading}
