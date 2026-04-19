@@ -96,6 +96,20 @@ def classify_intents(question: str):
         "remove null",
     ]
 
+    dataset_topic_keywords = [
+        "gdp",
+        "population",
+        "inflation",
+        "climate",
+        "temperature",
+        "sales",
+        "revenue",
+        "stock",
+        "unemployment",
+        "energy",
+        "covid"
+    ]
+
     if any(k in question for k in dataset_keywords):
         intents.append("dataset_search")
 
@@ -120,6 +134,9 @@ def classify_intents(question: str):
 
     if any(k in question for k in cleaning_keywords):
         intents.append("cleaning")
+
+    if any(k in question for k in dataset_topic_keywords):
+        intents.append("dataset_autoload")
 
     if not intents:
         intents.append("eda")

@@ -19,6 +19,13 @@ def data_engineer_agent(state):
         "gdp": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
         "population": "https://raw.githubusercontent.com/datasets/population/master/data/population.csv",
         "climate": "https://raw.githubusercontent.com/datasets/global-temp/master/data/annual.csv",
+        "inflation": "https://raw.githubusercontent.com/datasets/inflation/master/data/inflation.csv",
+        "temperature": "https://raw.githubusercontent.com/datasets/global-temp/master/data/annual.csv",
+        "sales": "https://raw.githubusercontent.com/mwaskom/seaborn-data/master/tips.csv",  # placeholder
+        "revenue": "https://raw.githubusercontent.com/mwaskom/seaborn-data/master/tips.csv",  # placeholder
+        "stock": "https://raw.githubusercontent.com/datasets/stock-prices/master/data/stock-prices.csv",  # placeholder
+        "energy": "https://raw.githubusercontent.com/datasets/co2-fossil-by-nation/master/global.csv",
+        "covid": "https://raw.githubusercontent.com/datasets/covid-19/master/data/countries-aggregated.csv",  # placeholder
         "inflation india": "https://raw.githubusercontent.com/datasets/inflation/master/data/inflation.csv",
         "co2 emissions": "https://raw.githubusercontent.com/datasets/co2-fossil-by-nation/master/global.csv",
         "world bank gdp": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",

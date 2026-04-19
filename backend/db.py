@@ -28,6 +28,7 @@ class SessionMemory(Base):
     eda_summary = Column(JSON)
     last_insight = Column(Text)
     last_columns = Column(JSON)
+    dataset_topic = Column(String)
 
 
 EXPECTED_COLUMNS = {
@@ -42,6 +43,7 @@ EXPECTED_COLUMNS = {
     "eda_summary": "JSON",
     "last_insight": "TEXT",
     "last_columns": "JSON",
+    "dataset_topic": "VARCHAR",
 }
 
 
@@ -109,6 +111,7 @@ def save_session(
     eda_summary=_UNSET,
     last_insight=_UNSET,
     last_columns=_UNSET,
+    dataset_topic=_UNSET,
 ):
 
     db = SessionLocal()
@@ -135,6 +138,7 @@ def save_session(
         "eda_summary": eda_summary,
         "last_insight": last_insight,
         "last_columns": last_columns,
+        "dataset_topic": dataset_topic,
     }
 
     for field_name, value in updates.items():

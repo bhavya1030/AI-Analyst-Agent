@@ -242,6 +242,7 @@ def analyze(session_id: str = "default"):
             last_chart_type=result.get("last_chart_type"),
             last_intent=result.get("last_intent"),
             last_operation=result.get("last_operation"),
+            dataset_topic=result.get("dataset_topic"),
         )
 
         return _stable_response(result)
@@ -290,6 +291,7 @@ def ask(
             "last_query": question,
             "last_insight": result.get("answer"),
             "eda_summary": result.get("dataset_profile") or {},
+            "dataset_topic": result.get("dataset_topic"),
         }
 
         if normalized_file_path and result.get("data") is not None:
