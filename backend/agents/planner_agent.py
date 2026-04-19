@@ -297,15 +297,9 @@ def planner_agent(state):
     if "visualization" in intents:
         dataset_available = _ensure_dataset_loaded(state, plan)
         
-        if not dataset_available and not dataset_requested:
-            state["answer"] = "I could not determine which dataset to load. Try specifying one like GDP, population, or climate."
-            state["stop"] = True
-            return state
-        
+        # Visualization should always proceed - load dataset if needed
         plan.extend([
             "profile_data",
-            "dataset_topic_detection",
-            "pattern_detection",
             "run_viz",
             "chart_interpretation",
         ])

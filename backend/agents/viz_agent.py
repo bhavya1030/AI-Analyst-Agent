@@ -203,7 +203,7 @@ def viz_agent(state):
             chart_type = "histogram"
 
         if fig:
-            state["chart"] = figure_to_json(fig)
+            state["chart"] = fig.to_plotly_json()
             state["chart_columns_used"] = used_cols
             state["last_chart_type"] = chart_type
             state["rows"] = int(df.shape[0])

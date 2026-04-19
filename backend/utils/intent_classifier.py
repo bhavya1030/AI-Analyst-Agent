@@ -15,6 +15,8 @@ def classify_intents(question: str):
 
     viz_keywords = [
         "plot",
+        "show",
+        "display",
         "chart",
         "graph",
         "distribution",
