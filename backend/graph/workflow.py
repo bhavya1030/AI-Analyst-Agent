@@ -9,6 +9,7 @@ from backend.agents.data_engineer_agent import data_engineer_agent
 from backend.agents.cleaning_agent import cleaning_agent
 from backend.agents.conversation_context_agent import conversation_context_agent
 from backend.agents.dataset_topic_agent import dataset_topic_agent
+from backend.agents.dataset_search_agent import dataset_search_agent
 from backend.agents.pattern_detection_agent import pattern_detection_agent
 from backend.agents.eda_agent import eda_agent
 from backend.agents.viz_agent import viz_agent, run_multi_viz_agent
@@ -29,6 +30,8 @@ ROUTE_MAP = {
     "profile_data": "profile_data",
     "recommend_analysis": "recommend_analysis",
     "dataset_topic_detection": "dataset_topic_detection",
+    "dataset_topic_agent": "dataset_topic_agent",
+    "dataset_search_agent": "dataset_search_agent",
     "pattern_detection": "pattern_detection",
     "explain_dataset": "explain_dataset",
     "clean_data": "clean_data",
@@ -52,6 +55,8 @@ REGISTERED_NODES = {
     "profile_data",
     "recommend_analysis",
     "dataset_topic_detection",
+    "dataset_topic_agent",
+    "dataset_search_agent",
     "pattern_detection",
     "explain_dataset",
     "dataset_embedding_search",
@@ -144,8 +149,16 @@ def build_graph():
         _wrap_agent("recommend_analysis", recommendation_agent),
     )
     builder.add_node(
+        "dataset_topic_agent",
+        _wrap_agent("dataset_topic_agent", dataset_topic_agent),
+    )
+    builder.add_node(
         "dataset_topic_detection",
         _wrap_agent("dataset_topic_detection", dataset_topic_agent),
+    )
+    builder.add_node(
+        "dataset_search_agent",
+        _wrap_agent("dataset_search_agent", dataset_search_agent),
     )
     builder.add_node(
         "pattern_detection",
@@ -196,7 +209,9 @@ def build_graph():
         "fetch_data",
         "profile_data",
         "recommend_analysis",
+        "dataset_topic_agent",
         "dataset_topic_detection",
+        "dataset_search_agent",
         "pattern_detection",
         "explain_dataset",
         "dataset_embedding_search",

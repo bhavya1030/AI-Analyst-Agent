@@ -1,5 +1,9 @@
-def insight_agent(state):
+import json
 
+from backend.llm.ollama_client import invoke_llm
+
+
+def insight_agent(state):
     if state.get("forecast"):
         if state.get("answer"):
             state["answer"] = f"{state['answer']} Forecast generated using Prophet time-series model."
@@ -8,13 +12,13 @@ def insight_agent(state):
         state["forecast_chart"] = state.get("forecast_chart")
         return state
 
-    # If QA already produced an answer, do NOT overwrite it
     if state.get("answer") is not None:
         return state
 
     insights = state.get("insights", [])
     dataset_explanation = state.get("dataset_explanation", [])
     dataset_profile = state.get("dataset_profile", {})
+    recommended_next_steps = state.get("recommended_next_steps", [])
 
     if not insights:
         if dataset_explanation:
@@ -36,6 +40,33 @@ def insight_agent(state):
         return state
 
     summary = insights[0]
+    summary_text = _format_insight_summary(summary)
+
+    prompt = f"""
+You are a senior data analyst.
+
+Dataset Profile:
+{json.dumps(dataset_profile, indent=2)}
+
+EDA Summary:
+{summary_text}
+
+Recommendations:
+{json.dumps(recommended_next_steps, indent=2)}
+
+Generate:
+- Executive Summary
+- Key Insights
+- Potential Risks
+- Recommended Actions
+
+Return plain text.
+"""
+
+    response = invoke_llm(prompt)
+    if response:
+        state["answer"] = response.strip()
+        return state
 
     if not isinstance(summary, dict):
         state["answer"] = "Invalid dataset summary."
@@ -53,11 +84,7 @@ def insight_agent(state):
     missing = summary.get("missing_values", {})
     describe = summary.get("describe", {})
 
-    text_output = []
-
-    text_output.append(
-        f"Dataset contains {rows} rows and {len(columns)} columns."
-    )
+    text_output = [f"Dataset contains {rows} rows and {len(columns)} columns."]
 
     if isinstance(missing, dict) and sum(missing.values()) == 0:
         text_output.append("No missing values detected.")
@@ -65,18 +92,24 @@ def insight_agent(state):
         text_output.append("Dataset contains missing values.")
 
     if isinstance(describe, dict):
-
         for col, stats in describe.items():
-
             if isinstance(stats, dict):
-
                 if isinstance(stats.get("mean"), (int, float)):
                     mean_val = round(stats["mean"], 2)
                     text_output.append(f"Average {col} is {mean_val}.")
-
                 if isinstance(stats.get("max"), (int, float)):
                     text_output.append(f"Maximum {col} is {stats['max']}.")
 
     state["answer"] = " ".join(text_output)
-
     return state
+
+
+def _format_insight_summary(summary):
+    if isinstance(summary, str):
+        return summary
+    if isinstance(summary, dict):
+        try:
+            return json.dumps(summary, indent=2)
+        except Exception:
+            return str(summary)
+    return str(summary)
