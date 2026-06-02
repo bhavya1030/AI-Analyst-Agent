@@ -12,6 +12,7 @@ from backend.config import settings
 from backend.core.logger import get_logger
 from backend.db import get_session, list_sessions, save_session
 from backend.graph.workflow import build_graph
+from backend.llm.ollama_client import check_ollama_availability
 from backend.utils.dataset_loader import load_dataset
 from backend.utils.json_safe import sanitize_for_json
 
@@ -27,6 +28,21 @@ app.add_middleware(
 )
 graph = build_graph()
 logger = get_logger(__name__)
+
+
+@app.on_event("startup")
+def validate_ollama():
+    available, message = check_ollama_availability()
+    if available:
+        logger.info(
+            "Ollama startup check succeeded",
+            extra={"message": message},
+        )
+    else:
+        logger.warning(
+            "Ollama startup check failed",
+            extra={"message": message},
+        )
 
 
 @app.middleware("http")
