@@ -64,11 +64,40 @@ An agentic AI workflow for intelligent data analysis using Large Language Models
    ```
 
 4. Set up environment variables:
-   Create a `.env` file in the backend directory with your API keys:
+   Create a `.env` file in the backend directory with your API keys and Ollama model settings:
    ```
    OPENAI_API_KEY=your_openai_api_key_here
-   # Add other required environment variables
+   OLLAMA_MODEL=qwen3:8b
    ```
+
+### Ollama Setup
+
+For Windows, install Ollama and pull the configured model.
+
+Official install:
+
+```powershell
+https://ollama.com/download
+```
+
+PowerShell alternative:
+
+```powershell
+irm https://ollama.com/install.ps1 | iex
+```
+
+After installation:
+
+```powershell
+ollama pull qwen3:8b
+```
+
+Verification:
+
+```powershell
+ollama list
+ollama run qwen3:8b
+```
 
 ### Frontend Setup
 
