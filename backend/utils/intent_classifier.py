@@ -1,5 +1,6 @@
 import json
 
+from backend.config import settings
 from backend.core.logger import get_logger
 from backend.llm.ollama_client import invoke_llm
 
@@ -33,6 +34,7 @@ Input:
 {question}
 """
 
+    logger.info("LLM INTENT CLASSIFIER INVOKED", extra={"prompt": question, "model": settings.OLLAMA_MODEL})
     response = invoke_llm(prompt)
     intents = _parse_intents(response)
 

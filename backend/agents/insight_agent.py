@@ -1,6 +1,10 @@
 import json
 
+from backend.config import settings
+from backend.core.logger import get_logger
 from backend.llm.ollama_client import invoke_llm
+
+logger = get_logger(__name__)
 
 
 def insight_agent(state):
@@ -63,6 +67,7 @@ Generate:
 Return plain text.
 """
 
+    logger.info("LLM INSIGHT AGENT INVOKED", extra={"model": settings.OLLAMA_MODEL})
     response = invoke_llm(prompt)
     if response:
         state["answer"] = response.strip()
