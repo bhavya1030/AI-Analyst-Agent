@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic_settings import BaseSettings
-from pydantic import ConfigDict
+from pydantic import ConfigDict, field_validator
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 
@@ -18,9 +18,15 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL_NAME: str = "sentence-transformers/all-MiniLM-L6-v2"
     SIMILARITY_THRESHOLD: int = 55
     CHART_DEFAULT_LIMIT: int = 4
-    OLLAMA_MODEL: str = "qwen3:8b"
+    OLLAMA_MODEL: str = "qwen3:4b"
     OLLAMA_SERVER_URL: str = "http://localhost:11434"
     LOG_LEVEL: str = "INFO"
+
+    @field_validator("OLLAMA_MODEL", "OLLAMA_SERVER_URL", mode="before")
+    def _strip_ollama_strings(cls, value: str) -> str:
+        if isinstance(value, str):
+            return value.strip().strip('"').strip("'")
+        return value
     DATASET_CATALOG: list[dict[str, Any]] = [
         {
             "title": "World Bank GDP by Country",

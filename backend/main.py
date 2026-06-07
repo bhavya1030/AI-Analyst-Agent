@@ -12,7 +12,7 @@ from backend.config import settings
 from backend.core.logger import get_logger
 from backend.db import get_session, list_sessions, save_session
 from backend.graph.workflow import build_graph
-from backend.startup.ollama_validator import get_ollama_status
+from backend.startup.ollama_validator import get_ollama_status, validate_model_inference
 from backend.utils.dataset_loader import load_dataset
 from backend.utils.json_safe import sanitize_for_json
 
@@ -44,6 +44,8 @@ def validate_ollama():
         else:
             logger.warning("Ollama server not reachable at %s", settings.OLLAMA_SERVER_URL)
 
+        logger.info("Configured Ollama model: %s", status["model_name"])
+
         if status["model_available"]:
             logger.info("Model %s available", status["model_name"])
         else:
@@ -59,14 +61,35 @@ def validate_ollama():
 
 
 @app.get("/health/llm")
-def health_llm():
+def health_llm(test_inference: bool = False):
     status = get_ollama_status()
-    return {
-        "status": "ok",
+    response = {
         "ollama_installed": status["ollama_installed"],
         "ollama_running": status["ollama_running"],
         "model_available": status["model_available"],
+        "configured_model": status["configured_model"],
+        "installed_models": status.get("installed_models", []),
     }
+
+    if test_inference:
+        try:
+            inference_result = validate_model_inference()
+            response["inference_success"] = inference_result.get("inference_successful", False)
+            if inference_result.get("endpoint") is not None:
+                response["endpoint"] = inference_result.get("endpoint")
+            if inference_result.get("response_text") is not None:
+                response["response_text"] = inference_result.get("response_text")
+            if not inference_result.get("inference_successful", False):
+                response["error"] = inference_result.get("failure_reason", "Inference failed")
+        except Exception as exc:
+            logger.warning(
+                "Ollama inference health test failed",
+                extra={"error": str(exc)},
+            )
+            response["inference_success"] = False
+            response["error"] = str(exc)
+
+    return response
 
 
 @app.get("/health/full")
@@ -87,7 +110,9 @@ def health_full():
             "ollama_installed": status["ollama_installed"],
             "ollama_running": status["ollama_running"],
             "model_available": status["model_available"],
-            "model_name": status["model_name"],
+            "configured_model": status["configured_model"],
+            "installed_models": status.get("installed_models", []),
+            "failure_reason": status.get("failure_reason"),
         },
     }
 

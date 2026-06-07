@@ -6,8 +6,11 @@ from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
 from backend.config import settings
+from backend.core.logger import get_logger
 
-DEFAULT_TIMEOUT_SECONDS = 6
+logger = get_logger(__name__)
+
+DEFAULT_TIMEOUT_SECONDS = 60
 
 
 def _read_json_response(url: str, request: Request) -> Any:
@@ -27,18 +30,21 @@ def _check_server_root() -> bool:
 
 def _fetch_model_list() -> list[str]:
     request = Request(
-        urljoin(settings.OLLAMA_SERVER_URL, "/v1/models"),
+        urljoin(settings.OLLAMA_SERVER_URL, "/api/tags"),
         headers={"Accept": "application/json"},
         method="GET",
     )
     payload = _read_json_response(settings.OLLAMA_SERVER_URL, request)
 
-    if isinstance(payload, dict) and "models" in payload:
-        payload = payload["models"]
+    models_payload = []
+    if isinstance(payload, dict):
+        models_payload = payload.get("models", [])
+    elif isinstance(payload, list):
+        models_payload = payload
 
     models: list[str] = []
-    if isinstance(payload, list):
-        for item in payload:
+    if isinstance(models_payload, list):
+        for item in models_payload:
             if isinstance(item, str):
                 models.append(item)
             elif isinstance(item, dict):
@@ -71,27 +77,92 @@ def _extract_text_from_completion(payload: Any) -> str:
     return " ".join(part for part in text_parts if part)
 
 
-def _test_model_response(model_name: str) -> bool:
-    prompt = "Please respond with the single word pong."
-    body = json.dumps({
-        "model": model_name,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0,
-        "max_tokens": 10,
-    }).encode("utf-8")
-    request = Request(
-        urljoin(settings.OLLAMA_SERVER_URL, "/v1/chat/completions"),
-        data=body,
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
-        method="POST",
-    )
+def _test_model_response(model_name: str) -> tuple[bool, str, str]:
+    prompt = "Respond with pong"
+    completion_paths = [
+        "/v1/completions",
+        "/v1/chat/completions",
+        "/api/chat/completions",
+    ]
 
+    for completion_path in completion_paths:
+        if completion_path == "/v1/completions":
+            body = json.dumps({
+                "model": model_name,
+                "prompt": prompt,
+                "temperature": 0,
+                "max_tokens": 10,
+            }).encode("utf-8")
+        else:
+            body = json.dumps({
+                "model": model_name,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0,
+                "max_tokens": 10,
+            }).encode("utf-8")
+
+        request = Request(
+            urljoin(settings.OLLAMA_SERVER_URL, completion_path),
+            data=body,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+
+        try:
+            payload = _read_json_response(settings.OLLAMA_SERVER_URL, request)
+            text = _extract_text_from_completion(payload)
+            if "pong" in text.lower():
+                return True, completion_path, text
+            return False, completion_path, text
+        except (HTTPError, URLError, ValueError, json.JSONDecodeError, TimeoutError, OSError) as exc:
+            logger.warning(
+                "Ollama inference test failed for endpoint %s",
+                completion_path,
+                extra={"model": model_name, "error": str(exc)},
+            )
+
+    return False, "", ""
+
+
+def validate_model_inference() -> dict[str, Any]:
+    model_name = settings.OLLAMA_MODEL
     try:
-        payload = _read_json_response(settings.OLLAMA_SERVER_URL, request)
-        text = _extract_text_from_completion(payload)
-        return "pong" in text.lower()
-    except (HTTPError, URLError, ValueError, json.JSONDecodeError):
-        return False
+        success, endpoint, response_text = _test_model_response(model_name)
+        if success:
+            logger.info("Inference successful", extra={"model": model_name, "endpoint": endpoint})
+            return {
+                "inference_successful": True,
+                "endpoint": endpoint,
+                "response_text": response_text,
+            }
+
+        failure_reason = "Model inference did not return pong"
+        logger.warning(
+            "Inference failed",
+            extra={"model": model_name, "endpoint": endpoint, "response_text": response_text},
+        )
+        return {
+            "inference_successful": False,
+            "endpoint": endpoint,
+            "response_text": response_text,
+            "failure_reason": failure_reason,
+        }
+    except TimeoutError as exc:
+        logger.warning("Ollama inference timed out", extra={"model": model_name, "error": str(exc)})
+        return {
+            "inference_successful": False,
+            "endpoint": "",
+            "response_text": "",
+            "failure_reason": "timeout",
+        }
+    except Exception as exc:
+        logger.warning("Ollama inference failed", extra={"model": model_name, "error": str(exc)})
+        return {
+            "inference_successful": False,
+            "endpoint": "",
+            "response_text": "",
+            "failure_reason": str(exc),
+        }
 
 
 def get_ollama_status() -> dict[str, Any]:
@@ -101,29 +172,40 @@ def get_ollama_status() -> dict[str, Any]:
         "ollama_running": False,
         "model_available": False,
         "model_name": model_name,
+        "configured_model": model_name,
+        "installed_models": [],
+        "failure_reason": None,
     }
 
+    logger.info("Configured Ollama model: %s", model_name)
+
     if shutil.which("ollama") is None:
+        status["failure_reason"] = "Ollama executable not found"
         return status
 
     status["ollama_installed"] = True
 
     if not _check_server_root():
+        status["failure_reason"] = f"Ollama server not reachable at {settings.OLLAMA_SERVER_URL}"
         return status
 
+    logger.info("Ollama reachable")
     status["ollama_running"] = True
 
     try:
         available_models = _fetch_model_list()
-    except (HTTPError, URLError, ValueError, json.JSONDecodeError):
+    except (HTTPError, URLError, ValueError, json.JSONDecodeError) as exc:
+        logger.warning("Failed to fetch Ollama models", extra={"error": str(exc)})
+        status["failure_reason"] = "Failed to query Ollama model tags"
         return status
 
+    status["installed_models"] = available_models
     normalized = model_name.strip().lower()
     available_names = [name.strip().lower() for name in available_models if isinstance(name, str)]
     if normalized not in available_names:
+        status["failure_reason"] = f"Configured model {model_name} not found among installed models"
         return status
 
-    if _test_model_response(model_name):
-        status["model_available"] = True
-
+    status["model_available"] = True
+    logger.info("Model found: %s", model_name)
     return status

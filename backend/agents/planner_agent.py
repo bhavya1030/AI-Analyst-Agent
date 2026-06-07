@@ -1,5 +1,6 @@
 import json
 
+from backend.config import settings
 from backend.core.logger import get_logger
 from backend.llm.ollama_client import invoke_llm
 from backend.utils.intent_classifier import classify_intents
@@ -170,6 +171,7 @@ Rules:
 - Use generate_insight to conclude the workflow.
 """
 
+    logger.info("LLM PLANNER INVOKED", extra={"question": question, "model": settings.OLLAMA_MODEL})
     response = invoke_llm(prompt)
     return _normalize_plan_steps(_parse_planner_response(response))
 

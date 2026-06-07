@@ -2,7 +2,22 @@ import time
 
 import pandas as pd
 import plotly.express as px
-from prophet import Prophet
+
+try:
+    from prophet import Prophet
+    PROPHET_AVAILABLE = True
+except Exception:
+    Prophet = None
+    PROPHET_AVAILABLE = False
+
+try:
+    from sklearn.linear_model import LinearRegression
+    from sklearn.preprocessing import PolynomialFeatures
+    SKLEARN_AVAILABLE = True
+except Exception:
+    LinearRegression = None
+    PolynomialFeatures = None
+    SKLEARN_AVAILABLE = False
 
 from backend.cache.dataset_cache import get_forecast, set_forecast
 from backend.config import settings
@@ -22,6 +37,65 @@ def _normalize_time_series(series: pd.Series) -> pd.Series:
         return pd.to_datetime(cleaned.astype(int).astype(str), format="%Y", errors="coerce")
 
     return pd.to_datetime(series, errors="coerce")
+
+
+def _build_future_dates(series: pd.Series) -> pd.DatetimeIndex:
+    last_date = series.max()
+    freq = pd.infer_freq(series)
+    if freq is None:
+        freq = "D"
+
+    try:
+        future_dates = pd.date_range(start=last_date, periods=settings.FORECAST_HORIZON + 1, freq=freq)[1:]
+    except Exception:
+        future_dates = pd.date_range(start=last_date, periods=settings.FORECAST_HORIZON + 1, freq="D")[1:]
+
+    return future_dates
+
+
+def _serialize_forecast_records(records: list[dict]) -> list[dict]:
+    serialized = []
+    for item in records:
+        if not isinstance(item, dict):
+            serialized.append(item)
+            continue
+
+        item_copy = item.copy()
+        ds_value = item_copy.get("ds")
+        if isinstance(ds_value, pd.Timestamp):
+            item_copy["ds"] = ds_value.isoformat()
+        serialized.append(item_copy)
+    return serialized
+
+
+def _regression_forecast(series: pd.DataFrame, time_col: str, value_col: str) -> tuple[list[dict], str]:
+    if not SKLEARN_AVAILABLE:
+        raise RuntimeError("Regression fallback unavailable because sklearn is not installed")
+
+    x_values = (series["ds"].view("int64") // 10**9).to_numpy().reshape(-1, 1)
+    y_values = series["y"].to_numpy()
+    future_dates = _build_future_dates(series["ds"])
+    future_x = (future_dates.view("int64") // 10**9).to_numpy().reshape(-1, 1)
+
+    features = PolynomialFeatures(degree=2, include_bias=False)
+    x_poly = features.fit_transform(x_values)
+    future_x_poly = features.transform(future_x)
+
+    model = LinearRegression()
+    model.fit(x_poly, y_values)
+    predictions = model.predict(future_x_poly)
+
+    forecast_df = pd.DataFrame({"ds": future_dates, "yhat": predictions})
+    fig = px.line(
+        forecast_df,
+        x="ds",
+        y="yhat",
+        labels={"ds": time_col, "yhat": value_col},
+        title=f"Forecast for {value_col}",
+    )
+    fig.add_scatter(x=series["ds"], y=series["y"], mode="markers+lines", name="Historical")
+
+    return _serialize_forecast_records(forecast_df.to_dict(orient="records")), figure_to_json(fig)
 
 
 def forecasting_agent(state):
@@ -77,36 +151,41 @@ def forecasting_agent(state):
     start_time = time.perf_counter()
 
     try:
-        model = Prophet()
-        model.fit(series[["ds", "y"]])
+        if PROPHET_AVAILABLE:
+            model = Prophet()
+            model.fit(series[["ds", "y"]])
 
-        future = model.make_future_dataframe(periods=settings.FORECAST_HORIZON)
-        forecast = model.predict(future)
+            future = model.make_future_dataframe(periods=settings.FORECAST_HORIZON)
+            forecast = model.predict(future)
 
-        state["forecast"] = forecast.tail(settings.FORECAST_HORIZON).to_dict(orient="records")
-        fig = px.line(
-            forecast,
-            x="ds",
-            y="yhat",
-            labels={"ds": time_col, "yhat": value_col},
-            title=f"Forecast for {value_col}",
-        )
-        fig.add_scatter(x=series["ds"], y=series["y"], mode="markers+lines", name="Historical")
-        fig.add_scatter(
-            x=forecast["ds"],
-            y=forecast["yhat_lower"],
-            mode="lines",
-            line=dict(dash="dash"),
-            name="Lower CI",
-        )
-        fig.add_scatter(
-            x=forecast["ds"],
-            y=forecast["yhat_upper"],
-            mode="lines",
-            line=dict(dash="dash"),
-            name="Upper CI",
-        )
-        state["forecast_chart"] = figure_to_json(fig)
+            state["forecast"] = _serialize_forecast_records(forecast.tail(settings.FORECAST_HORIZON).to_dict(orient="records"))
+            fig = px.line(
+                forecast,
+                x="ds",
+                y="yhat",
+                labels={"ds": time_col, "yhat": value_col},
+                title=f"Forecast for {value_col}",
+            )
+            fig.add_scatter(x=series["ds"], y=series["y"], mode="markers+lines", name="Historical")
+            fig.add_scatter(
+                x=forecast["ds"],
+                y=forecast["yhat_lower"],
+                mode="lines",
+                line=dict(dash="dash"),
+                name="Lower CI",
+            )
+            fig.add_scatter(
+                x=forecast["ds"],
+                y=forecast["yhat_upper"],
+                mode="lines",
+                line=dict(dash="dash"),
+                name="Upper CI",
+            )
+            state["forecast_chart"] = figure_to_json(fig)
+        else:
+            logger.warning("Prophet unavailable, using regression fallback")
+            state["forecast"], state["forecast_chart"] = _regression_forecast(series, time_col, value_col)
+
         state["last_forecast_target"] = value_col
         state["last_chart_type"] = "forecast"
         state["last_columns_used"] = [time_col, value_col]
@@ -123,6 +202,8 @@ def forecasting_agent(state):
         )
         return state
     except Exception as exc:
+        if not PROPHET_AVAILABLE:
+            logger.warning("Prophet unavailable, using regression fallback")
         state["forecast_error"] = f"Forecast failed: {exc}"
         state["error_type"] = FORECAST_FAILED
         logger.error(
