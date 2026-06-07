@@ -10,7 +10,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 
 
 class Settings(BaseSettings):
-    model_config = ConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = ConfigDict(env_file=str(BASE_DIR / ".env"), env_file_encoding="utf-8")
 
     DATABASE_URL: str = "sqlite:///memory.db"
     DATA_DIR: Path = BASE_DIR / "data"
@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL_NAME: str = "sentence-transformers/all-MiniLM-L6-v2"
     SIMILARITY_THRESHOLD: int = 55
     CHART_DEFAULT_LIMIT: int = 4
+    OLLAMA_MODEL: str = "qwen3:8b"
+    OLLAMA_SERVER_URL: str = "http://localhost:11434"
     LOG_LEVEL: str = "INFO"
     DATASET_CATALOG: list[dict[str, Any]] = [
         {

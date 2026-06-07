@@ -12,7 +12,7 @@ from backend.config import settings
 from backend.core.logger import get_logger
 from backend.db import get_session, list_sessions, save_session
 from backend.graph.workflow import build_graph
-from backend.llm.ollama_client import check_ollama_availability
+from backend.startup.ollama_validator import get_ollama_status
 from backend.utils.dataset_loader import load_dataset
 from backend.utils.json_safe import sanitize_for_json
 
@@ -32,17 +32,64 @@ logger = get_logger(__name__)
 
 @app.on_event("startup")
 def validate_ollama():
-    available, message = check_ollama_availability()
-    if available:
-        logger.info(
-            "Ollama startup check succeeded",
-            extra={"message": message},
-        )
-    else:
+    try:
+        status = get_ollama_status()
+        if status["ollama_installed"]:
+            logger.info("Ollama installed")
+        else:
+            logger.warning("Ollama executable not found")
+
+        if status["ollama_running"]:
+            logger.info("Ollama running")
+        else:
+            logger.warning("Ollama server not reachable at %s", settings.OLLAMA_SERVER_URL)
+
+        if status["model_available"]:
+            logger.info("Model %s available", status["model_name"])
+        else:
+            logger.warning("Model %s unavailable", status["model_name"])
+
+        if not (status["ollama_installed"] and status["ollama_running"] and status["model_available"]):
+            logger.warning("Falling back to rule-based reasoning")
+    except Exception as exc:
         logger.warning(
-            "Ollama startup check failed",
-            extra={"message": message},
+            "Ollama startup validation failed",
+            extra={"error": str(exc)},
         )
+
+
+@app.get("/health/llm")
+def health_llm():
+    status = get_ollama_status()
+    return {
+        "status": "ok",
+        "ollama_installed": status["ollama_installed"],
+        "ollama_running": status["ollama_running"],
+        "model_available": status["model_available"],
+    }
+
+
+@app.get("/health/full")
+def health_full():
+    status = get_ollama_status()
+    database_status = "ok"
+    try:
+        get_session("health_check")
+    except Exception:
+        database_status = "error"
+
+    graph_status = "ok" if graph is not None else "error"
+
+    return {
+        "database": database_status,
+        "langgraph": graph_status,
+        "ollama": {
+            "ollama_installed": status["ollama_installed"],
+            "ollama_running": status["ollama_running"],
+            "model_available": status["model_available"],
+            "model_name": status["model_name"],
+        },
+    }
 
 
 @app.middleware("http")
