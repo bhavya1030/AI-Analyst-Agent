@@ -203,6 +203,9 @@ def build_graph():
     builder.set_entry_point("conversation_context")
     builder.add_edge("conversation_context", "planner")
 
+    # All analysis nodes route through the plan-driven router so the planner
+    # can compose full ChatGPT-like pipelines (discover → prepare → analyze →
+    # visualize → recommend → insight) without hard-coded dead ends.
     for node_name in [
         "planner",
         "load_data",
@@ -223,14 +226,9 @@ def build_graph():
         "forecast_data",
         "chart_interpretation",
         "hypothesis_generation",
+        "compare_datasets",
     ]:
         builder.add_conditional_edges(node_name, router, VALID_ROUTE_MAP)
-
-    # -------------------------
-    # AFTER COMPARISON AGENT
-    # -------------------------
-
-    builder.add_edge("compare_datasets", "generate_insight")
 
     # -------------------------
     # TERMINAL EDGES

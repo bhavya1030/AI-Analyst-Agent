@@ -1,3 +1,5 @@
+import re
+
 from backend.utils.intent_classifier import classify_intents
 
 FOLLOW_UP_MAPPINGS = {
@@ -13,21 +15,69 @@ FOLLOW_UP_MAPPINGS = {
     "compare that": "compare {subject} with another variable",
     "compare this": "compare {subject} with another variable",
     "show correlation instead": "show correlation heatmap",
-    "forecast instead": "predict next 10 years {subject}",
-    "forecast that": "predict next 10 years {subject}",
-    "forecast this": "predict next 10 years {subject}",
+    "forecast instead": "forecast {subject} for next 10 years",
+    "forecast that": "forecast {subject} for next 10 years",
+    "forecast this": "forecast {subject} for next 10 years",
+    "forecast it": "forecast {subject} for next 10 years",
+    "predict it": "forecast {subject} for next 10 years",
     "instead correlation": "show correlation heatmap",
+    "analyze it": "analyze {subject}",
+    "visualize it": "visualize trend of {subject}",
+    "plot it": "plot trend of {subject}",
+    "show it": "show trend of {subject}",
 }
 
 AMBIGUOUS_PHRASES = set(FOLLOW_UP_MAPPINGS.keys())
 
+PRONOUN_PATTERN = re.compile(
+    r"\b(it|that|this|them|those|the same|the data|the dataset)\b",
+    re.IGNORECASE,
+)
 
-def _describe_subject(last_column, last_columns):
+
+def _describe_subject(state):
+    topic = (state.get("dataset_topic") or "").strip()
+    if topic and topic.lower() not in {"general dataset", "dataset discovery"}:
+        return topic
+
+    last_column = state.get("last_column_used")
     if last_column:
-        return last_column
+        return str(last_column)
+
+    last_columns = state.get("last_columns_used") or []
     if last_columns:
-        return last_columns[-1]
+        return str(last_columns[-1])
+
+    if state.get("data") is not None:
+        return "the active dataset"
+
     return "the dataset"
+
+
+def _is_follow_up(question: str) -> bool:
+    lowered = question.lower().strip()
+    if lowered in AMBIGUOUS_PHRASES:
+        return True
+    if any(phrase in lowered for phrase in FOLLOW_UP_MAPPINGS):
+        return True
+    # Short pronoun-heavy follow-ups: "forecast it for 10 years"
+    if PRONOUN_PATTERN.search(lowered) and len(lowered.split()) <= 12:
+        return True
+    return False
+
+
+def _resolve_pronouns(question: str, subject: str) -> str:
+    if not subject or subject == "the dataset":
+        return question
+
+    def _replace(match):
+        token = match.group(0).lower()
+        if token in {"the data", "the dataset", "the same"}:
+            return subject
+        return subject
+
+    # Prefer explicit mappings first; this handles residual pronouns.
+    return PRONOUN_PATTERN.sub(_replace, question)
 
 
 def conversation_context_agent(state):
@@ -35,10 +85,14 @@ def conversation_context_agent(state):
     if not question:
         return state
 
+    # Preserve session continuity markers for downstream agents.
+    if state.get("data") is not None:
+        state["has_active_dataset"] = True
+    if state.get("dataset_url") and not state.get("dataset_topic"):
+        state["dataset_topic"] = state.get("dataset_topic") or "active session dataset"
+
     lowered = question.lower()
-    last_column = state.get("last_column_used")
-    last_columns = state.get("last_columns_used") or []
-    subject = _describe_subject(last_column, last_columns)
+    subject = _describe_subject(state)
     resolved = None
 
     for phrase, template in FOLLOW_UP_MAPPINGS.items():
@@ -46,26 +100,40 @@ def conversation_context_agent(state):
             resolved = template.format(subject=subject)
             break
 
-    if resolved:
-        state["question"] = resolved
-        lowered = resolved.lower()
+    if resolved is None and _is_follow_up(question):
+        resolved = _resolve_pronouns(question, subject)
 
-    intents = classify_intents(lowered)
+    if resolved and resolved != question:
+        state["question"] = resolved
+        state["resolved_from_context"] = True
+        state["context_subject"] = subject
+        lowered = resolved.lower()
+    else:
+        state["resolved_from_context"] = False
+
+    # Prefer fast rule-based intents; classify_intents already does fallback-first.
+    intents = classify_intents(state.get("question") or lowered)
     if intents:
         state["last_intent"] = intents[0]
+        state["intents"] = intents
 
-    if "forecasting" in intents or "forecast" in lowered:
+    if "forecasting" in intents or "forecast" in lowered or "predict" in lowered:
         state["last_forecast_target"] = subject
-
-    if "visualization" in intents:
+        state["last_operation"] = "forecast"
+    elif "visualization" in intents:
         state["last_operation"] = "visualization"
+    elif "comparison" in intents:
+        state["last_operation"] = "compare"
     elif "explanation" in intents:
         state["last_operation"] = "explain"
     elif "statistical_analysis" in intents:
         state["last_operation"] = "statistical_analysis"
-    elif "comparison" in intents:
-        state["last_operation"] = "compare"
-    elif "eda" in intents or "auto_analysis" in intents:
+    elif "eda" in intents or "dataset_autoload" in intents:
         state["last_operation"] = "analyze"
+
+    # When a follow-up arrives and a dataset is already loaded, avoid rediscovery
+    # unless the user explicitly asks for a new topic/dataset.
+    if state.get("data") is not None and state.get("resolved_from_context"):
+        state["reuse_active_dataset"] = True
 
     return state

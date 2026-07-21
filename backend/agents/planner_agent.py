@@ -30,21 +30,21 @@ VALID_PLANNER_NODES = {
     "generate_insight",
 }
 
-
-def _ensure_dataset_loaded(state, plan):
-    if state.get("data") is not None:
-        if "fetch_data" in plan:
-            plan.remove("fetch_data")
-        return True
-
-    if state.get("file_path"):
-        if "load_data" not in plan:
-            plan.append("load_data")
-        return True
-
-    if "fetch_data" not in plan and "dataset_search_agent" not in plan:
-        plan.insert(0, "dataset_search_agent")
-    return False
+DATASET_KEYWORDS = [
+    "gdp",
+    "population",
+    "inflation",
+    "climate",
+    "temperature",
+    "sales",
+    "revenue",
+    "stock",
+    "unemployment",
+    "energy",
+    "covid",
+    "electric vehicle",
+    "co2",
+]
 
 
 def _dedupe_plan(plan):
@@ -73,10 +73,6 @@ def _validate_plan(plan):
             extra={"invalid_nodes": invalid, "plan": plan},
         )
     return validated
-
-
-def _has_time_series(profile):
-    return bool(profile.get("time_columns") and profile.get("numeric_columns"))
 
 
 def _detect_chart_type(question: str) -> str:
@@ -135,15 +131,20 @@ def _normalize_plan_steps(plan):
 
 def _build_llm_plan(question: str, dataset_available: bool) -> list[str]:
     prompt = f"""
-You are an analytics workflow planner.
+You are an analytics workflow planner for an AI Data Analyst.
 
 Available steps:
-- fetch_data
-- dataset_search_agent
 - dataset_topic_agent
+- dataset_search_agent
+- fetch_data
+- clean_data
 - profile_data
 - run_eda
+- pattern_detection
 - run_viz
+- chart_interpretation
+- hypothesis_generation
+- recommend_analysis
 - run_qa
 - forecast_data
 - compare_datasets
@@ -161,14 +162,12 @@ Return ONLY JSON:
 }}
 
 Rules:
-- Use fetch_data if dataset required.
-- Use dataset_search_agent when no dataset is loaded and the user needs an external dataset.
-- Use dataset_topic_agent before dataset_search_agent.
-- Use profile_data before analysis.
+- If no dataset is available, start with dataset_topic_agent -> dataset_search_agent -> fetch_data.
+- Always prepare data: clean_data then profile_data before analysis.
+- Full analysis should include run_eda, run_viz, recommend_analysis, generate_insight.
 - Use forecast_data for prediction requests.
-- Use run_viz for visualization requests.
 - Use compare_datasets for comparison requests.
-- Use generate_insight to conclude the workflow.
+- End with generate_insight.
 """
 
     logger.info("LLM PLANNER INVOKED", extra={"question": question, "model": settings.OLLAMA_MODEL})
@@ -190,83 +189,147 @@ def _infer_operation(plan: list[str]) -> str | None:
     return None
 
 
-def _build_rule_based_plan(state, normalized, intents, dataset_requested):
-    plan = []
-
-    if "dataset_search" in intents or "dataset_autoload" in intents:
-        plan.extend([
-            "dataset_topic_agent",
-            "dataset_search_agent",
-            "fetch_data",
-            "profile_data",
-        ])
-        if "visualization" in intents:
-            plan.append("run_viz")
-        if "statistical_analysis" in intents:
-            plan.append("run_qa")
-        if "explanation" in intents:
-            plan.append("generate_insight")
-        return plan
-
-    if "forecasting" in intents:
-        if not state.get("data") and not dataset_requested:
-            state["answer"] = "I could not determine which dataset to load. Try specifying one like GDP, population, or climate."
-            state["stop"] = True
-            return []
-
-        return [
-            "dataset_topic_agent",
-            "dataset_search_agent",
-            "fetch_data",
-            "profile_data",
-            "forecast_data",
-            "chart_interpretation",
-            "hypothesis_generation",
-        ]
-
-    if "comparison" in intents:
-        if not state.get("data") and not dataset_requested:
-            state["answer"] = "I could not determine which dataset to load. Try specifying one like GDP, population, or climate."
-            state["stop"] = True
-            return []
-
-        return [
-            "dataset_topic_agent",
-            "dataset_search_agent",
-            "fetch_data",
-            "profile_data",
-            "compare_datasets",
-            "generate_insight",
-        ]
-
-    if "visualization" in intents:
-        return [
-            "dataset_topic_agent",
-            "dataset_search_agent",
-            "fetch_data",
-            "profile_data",
-            "run_viz",
-            "generate_insight",
-        ]
-
-    if "statistical_analysis" in intents or "explanation" in intents:
-        return [
-            "dataset_topic_agent",
-            "dataset_search_agent",
-            "fetch_data",
-            "profile_data",
-            "run_qa",
-            "generate_insight",
-        ]
-
+def _discovery_prefix(state, force: bool = False) -> list[str]:
+    """Steps to discover and load data when nothing is active."""
+    if state.get("data") is not None and not force:
+        return []
+    if state.get("file_path"):
+        return ["load_data"]
     return [
         "dataset_topic_agent",
         "dataset_search_agent",
         "fetch_data",
+    ]
+
+
+def _analysis_suffix(include_viz: bool = True) -> list[str]:
+    steps = [
+        "clean_data",
         "profile_data",
         "run_eda",
-        "generate_insight",
+        "pattern_detection",
     ]
+    if include_viz:
+        steps.extend(["run_viz", "chart_interpretation"])
+    steps.extend(
+        [
+            "hypothesis_generation",
+            "recommend_analysis",
+            "generate_insight",
+        ]
+    )
+    return steps
+
+
+def _build_rule_based_plan(state, normalized, intents, dataset_requested):
+    has_data = state.get("data") is not None
+    reuse = bool(state.get("reuse_active_dataset")) and has_data
+
+    # --- Comparison (country or multi-metric) ---
+    if "comparison" in intents:
+        if not has_data and not dataset_requested:
+            has_compare_signal = any(
+                token in normalized
+                for token in (
+                    "gdp",
+                    "population",
+                    "inflation",
+                    "compare",
+                    "vs",
+                    "versus",
+                    "india",
+                    "united states",
+                    "usa",
+                )
+            )
+            if not has_compare_signal:
+                state["answer"] = (
+                    "I could not determine which datasets or countries to compare. "
+                    "Try: 'Compare GDP and Population' or 'Compare GDP of India with US'."
+                )
+                state["stop"] = True
+                return []
+
+        plan = _discovery_prefix(state)
+        # Comparison agent can load its own sources; still profile when data exists.
+        if has_data or plan:
+            plan = plan + ["profile_data"]
+        plan.extend(["compare_datasets", "recommend_analysis", "generate_insight"])
+        return plan
+
+    # --- Forecasting ---
+    if "forecasting" in intents:
+        if not has_data and not dataset_requested and not state.get("dataset_url"):
+            state["answer"] = (
+                "I could not determine which dataset to forecast. "
+                "Try specifying one like GDP, population, or climate — "
+                "or analyze a dataset first, then say 'forecast it'."
+            )
+            state["stop"] = True
+            return []
+
+        if reuse or has_data:
+            return [
+                "profile_data",
+                "forecast_data",
+                "chart_interpretation",
+                "recommend_analysis",
+                "generate_insight",
+            ]
+
+        return _discovery_prefix(state) + [
+            "clean_data",
+            "profile_data",
+            "forecast_data",
+            "chart_interpretation",
+            "recommend_analysis",
+            "generate_insight",
+        ]
+
+    # --- Explicit visualization ---
+    if "visualization" in intents and "eda" not in intents and "dataset_autoload" not in intents:
+        if reuse or has_data:
+            return [
+                "profile_data",
+                "run_viz",
+                "chart_interpretation",
+                "recommend_analysis",
+                "generate_insight",
+            ]
+        return _discovery_prefix(state) + [
+            "clean_data",
+            "profile_data",
+            "run_viz",
+            "chart_interpretation",
+            "recommend_analysis",
+            "generate_insight",
+        ]
+
+    # --- Statistical QA ---
+    if "statistical_analysis" in intents and "eda" not in intents:
+        if reuse or has_data:
+            return ["profile_data", "run_qa", "recommend_analysis", "generate_insight"]
+        return _discovery_prefix(state) + [
+            "clean_data",
+            "profile_data",
+            "run_qa",
+            "recommend_analysis",
+            "generate_insight",
+        ]
+
+    # --- Full auto analysis (default ChatGPT-like path) ---
+    # Covers: analyze X, dataset_autoload, eda, explanation, open-ended topics
+    if reuse or (has_data and not dataset_requested):
+        return ["profile_data"] + _analysis_suffix(include_viz=True)
+
+    # Discovery + full analysis pipeline
+    plan = _discovery_prefix(state) + _analysis_suffix(include_viz=True)
+
+    # If user also asked for a chart explicitly, multi-viz is optional; run_viz is enough.
+    if "visualization" in intents and "run_viz" not in plan:
+        plan.insert(-2, "run_viz")
+
+    return plan
 
 
 def planner_agent(state):
@@ -275,46 +338,119 @@ def planner_agent(state):
 
     logger.info(
         "Planner received question",
-        extra={"action": "plan", "question": question, "dataset": state.get("dataset_url") or state.get("file_path")},
+        extra={
+            "action": "plan",
+            "question": question,
+            "dataset": state.get("dataset_url") or state.get("file_path"),
+            "has_data": state.get("data") is not None,
+        },
     )
 
-    intents = classify_intents(question)
+    # Reuse intents from conversation context when available to avoid duplicate work.
+    intents = state.get("intents") or classify_intents(question)
+    state["intents"] = intents
     state["last_intent"] = intents[0] if intents else None
 
-    dataset_keywords = [
-        "gdp",
-        "population",
-        "inflation",
-        "climate",
-        "temperature",
-        "sales",
-        "revenue",
-        "stock",
-        "unemployment",
-        "energy",
-        "covid",
-    ]
-    dataset_requested = any(keyword in normalized for keyword in dataset_keywords)
-    dataset_available = bool(state.get("data") or state.get("dataset_url") or state.get("file_path"))
-    profile = state.get("dataset_profile") or {}
+    dataset_requested = any(keyword in normalized for keyword in DATASET_KEYWORDS)
+    dataset_available = bool(
+        state.get("data") is not None
+        or state.get("dataset_url")
+        or state.get("file_path")
+    )
 
-    plan = _build_llm_plan(question, dataset_available)
-    if not plan:
-        plan = _build_rule_based_plan(state, normalized, intents, dataset_requested)
+    # Product default: deterministic rule-based plan first (reliable + fast).
+    plan = _build_rule_based_plan(state, normalized, intents, dataset_requested)
+
+    # Opt-in LLM planner only when enabled and rules produced nothing usable.
+    if (
+        not plan
+        and not state.get("stop")
+        and bool(getattr(settings, "USE_LLM_PLANNER", False))
+    ):
+        plan = _build_llm_plan(question, dataset_available)
+
+    # Ensure comparison is never dropped.
+    comparison_requested = (
+        "comparison" in intents
+        or any(token in normalized for token in ("compare", " vs ", "versus"))
+    )
+    if comparison_requested and "compare_datasets" not in plan:
+        if "generate_insight" in plan:
+            plan.insert(plan.index("generate_insight"), "compare_datasets")
+        else:
+            plan.append("compare_datasets")
+
+    # Ensure forecasting is never dropped when requested.
+    if "forecasting" in intents and "forecast_data" not in plan and not state.get("stop"):
+        if "generate_insight" in plan:
+            plan.insert(plan.index("generate_insight"), "forecast_data")
+        else:
+            plan.append("forecast_data")
 
     if "dataset_search_agent" in plan and "dataset_topic_agent" not in plan:
         index = plan.index("dataset_search_agent")
         plan.insert(index, "dataset_topic_agent")
 
-    if not dataset_available and "dataset_search_agent" not in plan:
-        plan.insert(0, "dataset_topic_agent")
-        plan.insert(1, "dataset_search_agent")
+    # No data yet and no discovery/load steps — inject discovery.
+    if (
+        not dataset_available
+        and "fetch_data" not in plan
+        and "load_data" not in plan
+        and "compare_datasets" not in plan
+        and not state.get("stop")
+    ):
+        plan = [
+            "dataset_topic_agent",
+            "dataset_search_agent",
+            "fetch_data",
+        ] + [step for step in plan if step not in {
+            "dataset_topic_agent",
+            "dataset_search_agent",
+            "fetch_data",
+        }]
 
-    if dataset_available and "fetch_data" in plan:
-        plan = [step for step in plan if step != "fetch_data"]
+    # Active dataset reuse (follow-ups like "forecast it"): skip rediscovery.
+    if state.get("data") is not None and state.get("reuse_active_dataset"):
+        plan = [
+            step
+            for step in plan
+            if step
+            not in {
+                "dataset_topic_agent",
+                "dataset_topic_detection",
+                "dataset_search_agent",
+                "fetch_data",
+            }
+        ]
+    elif state.get("data") is not None and not dataset_requested:
+        # Same session, no new topic named — keep working on the active frame.
+        plan = [step for step in plan if step not in {"fetch_data", "dataset_search_agent"}]
+    elif state.get("data") is not None and dataset_requested and not state.get("reuse_active_dataset"):
+        # User asked about a named topic while another frame is loaded — rediscover.
+        # Data Engineer will replace state["data"] on successful fetch.
+        if "fetch_data" not in plan:
+            insert_at = 0
+            for marker in ("dataset_search_agent", "dataset_topic_agent", "load_data"):
+                if marker in plan:
+                    insert_at = plan.index(marker) + 1
+            plan.insert(insert_at, "fetch_data")
+        # Force engineer to download even if a previous frame is present.
+        state["force_reload_dataset"] = True
+
+    if state.get("file_path") and state.get("data") is None and "load_data" not in plan:
+        plan.insert(0, "load_data")
+
+    # Always terminate with insights when analysis steps exist.
+    if plan and "generate_insight" not in plan and not state.get("stop"):
+        plan.append("generate_insight")
 
     plan = _dedupe_plan(plan)
     state["plan"] = plan
+
+    logger.info(
+        "Planner produced execution plan",
+        extra={"action": "plan", "plan": plan, "intents": intents},
+    )
 
     if not state.get("last_operation"):
         state["last_operation"] = _infer_operation(plan) or "workflow"
@@ -323,4 +459,3 @@ def planner_agent(state):
         state["last_chart_type"] = _detect_chart_type(normalized)
 
     return state
-

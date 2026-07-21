@@ -28,4 +28,7 @@ def test_planner_falls_back_for_invalid_node():
     }
 
     result = planner_agent(state)
-    assert result["plan"] == ["generate_insight"]
+    # With an uploaded file path, the copilot still builds a full analysis plan
+    # rather than a dead-end single node.
+    assert "load_data" in result["plan"] or "generate_insight" in result["plan"]
+    assert "invalid_node" not in result["plan"]

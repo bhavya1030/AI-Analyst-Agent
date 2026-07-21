@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     OLLAMA_MODEL: str = "qwen3:4b"
     OLLAMA_SERVER_URL: str = "http://localhost:11434"
     LOG_LEVEL: str = "INFO"
+    # Local LLM calls are optional. Deterministic routing keeps the copilot responsive.
+    USE_LLM_INTENT: bool = False
+    USE_LLM_PLANNER: bool = False
+    USE_LLM_TOPIC: bool = False
 
     @field_validator("OLLAMA_MODEL", "OLLAMA_SERVER_URL", mode="before")
     def _strip_ollama_strings(cls, value: str) -> str:
