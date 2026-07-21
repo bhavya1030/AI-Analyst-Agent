@@ -8,11 +8,27 @@ logger = get_logger(__name__)
 
 
 def classify_intents(question: str):
+    """Classify analytics intents.
+
+    Product rule: deterministic keyword fallback runs first so the copilot stays
+    responsive and predictable. The LLM is only used when the fallback is weak
+    (empty or bare "eda") and the question is ambiguous.
+    """
     question = (question or "").strip()
 
     if not question:
         return ["eda"]
 
+    fallback = _fallback_intent_classification(question)
+    # Product default: deterministic intents only. Local LLMs can take minutes
+    # per call and break the ChatGPT-like UX. Enable opt-in via settings if needed.
+    use_llm = bool(getattr(settings, "USE_LLM_INTENT", False))
+    specific = [intent for intent in fallback if intent != "eda"]
+
+    if specific or not use_llm:
+        return list(dict.fromkeys(fallback or ["eda"]))
+
+    # Opt-in LLM path for ambiguous questions only.
     prompt = f"""
 You are an analytics intent classifier.
 Possible intents:
@@ -34,17 +50,22 @@ Input:
 {question}
 """
 
-    logger.info("LLM INTENT CLASSIFIER INVOKED", extra={"prompt": question, "model": settings.OLLAMA_MODEL})
-    response = invoke_llm(prompt)
-    intents = _parse_intents(response)
+    logger.info(
+        "LLM INTENT CLASSIFIER INVOKED",
+        extra={"prompt": question, "model": settings.OLLAMA_MODEL},
+    )
+    try:
+        response = invoke_llm(prompt)
+        intents = _parse_intents(response)
+        if intents:
+            return list(dict.fromkeys(intents))
+    except Exception as exc:
+        logger.warning(
+            "Intent LLM classification failed; using fallback",
+            extra={"error": str(exc)},
+        )
 
-    if not intents:
-        intents = _fallback_intent_classification(question)
-
-    if not intents:
-        return ["eda"]
-
-    return list(dict.fromkeys(intents))
+    return list(dict.fromkeys(fallback or ["eda"]))
 
 
 def _parse_intents(response: str) -> list[str]:
@@ -93,6 +114,8 @@ def _fallback_intent_classification(question: str) -> list[str]:
         "dataset about",
         "get dataset",
         "similar dataset",
+        "search for data",
+        "find data on",
     ]
 
     viz_keywords = [
@@ -111,7 +134,8 @@ def _fallback_intent_classification(question: str) -> list[str]:
         "correlation",
         "trend",
         "histogram",
-        "vs",
+        "visualize",
+        "visualise",
     ]
 
     stat_keywords = [
@@ -124,12 +148,17 @@ def _fallback_intent_classification(question: str) -> list[str]:
         "std",
         "sum",
         "count",
+        "how many",
+        "what is the",
     ]
 
     compare_keywords = [
         "compare",
+        "comparison",
         "difference",
-        "relationship",
+        "versus",
+        " vs ",
+        "relationship between",
     ]
 
     explain_keywords = [
@@ -137,6 +166,8 @@ def _fallback_intent_classification(question: str) -> list[str]:
         "insight",
         "why",
         "interpret",
+        "what does",
+        "tell me about",
     ]
 
     forecasting_keywords = [
@@ -151,6 +182,20 @@ def _fallback_intent_classification(question: str) -> list[str]:
         "next 5 years",
         "next 10 years",
         "project future",
+        "for the next",
+    ]
+
+    analysis_keywords = [
+        "analyze",
+        "analyse",
+        "analysis",
+        "explore",
+        "investigate",
+        "study",
+        "overview",
+        "summarize",
+        "summary",
+        "eda",
     ]
 
     dataset_topic_keywords = [
@@ -165,10 +210,20 @@ def _fallback_intent_classification(question: str) -> list[str]:
         "unemployment",
         "energy",
         "covid",
+        "electric vehicle",
+        "ev sales",
+        "co2",
+        "emission",
     ]
 
     if any(k in normalized for k in dataset_keywords):
         intents.append("dataset_search")
+
+    if any(k in normalized for k in compare_keywords):
+        intents.append("comparison")
+
+    if any(k in normalized for k in forecasting_keywords):
+        intents.append("forecasting")
 
     if any(k in normalized for k in viz_keywords):
         intents.append("visualization")
@@ -176,14 +231,11 @@ def _fallback_intent_classification(question: str) -> list[str]:
     if any(k in normalized for k in stat_keywords):
         intents.append("statistical_analysis")
 
-    if any(k in normalized for k in compare_keywords):
-        intents.append("comparison")
-
     if any(k in normalized for k in explain_keywords):
         intents.append("explanation")
 
-    if any(k in normalized for k in forecasting_keywords):
-        intents.append("forecasting")
+    if any(k in normalized for k in analysis_keywords):
+        intents.append("eda")
 
     if any(k in normalized for k in dataset_topic_keywords):
         intents.append("dataset_autoload")

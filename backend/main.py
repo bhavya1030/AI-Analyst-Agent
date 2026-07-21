@@ -195,17 +195,23 @@ def _normalize_dataset_reference(file_path: str | None) -> str | None:
 
 
 def _build_state(session, question=None, file_path=None):
+    # Session memory: reload the active dataset so follow-ups like
+    # "forecast it" work without re-uploading or re-searching.
     dataset = None if file_path else _load_session_dataset(session)
+
+    dataset_url = getattr(session, "dataset_url", None) if session is not None else None
+    dataset_path = getattr(session, "dataset_path", None) if session is not None else None
+    dataset_topic = getattr(session, "dataset_topic", None) if session is not None else None
 
     return {
         "data": dataset,
         "last_dataset": dataset,
-        "last_column_used": getattr(session, "last_column", None),
-        "last_columns_used": getattr(session, "last_columns", None) or [],
-        "last_chart_type": getattr(session, "last_chart_type", None),
-        "last_intent": getattr(session, "last_intent", None),
-        "last_operation": getattr(session, "last_operation", None),
-        "last_forecast_target": getattr(session, "last_forecast_target", None),
+        "last_column_used": getattr(session, "last_column", None) if session is not None else None,
+        "last_columns_used": (getattr(session, "last_columns", None) or []) if session is not None else [],
+        "last_chart_type": getattr(session, "last_chart_type", None) if session is not None else None,
+        "last_intent": getattr(session, "last_intent", None) if session is not None else None,
+        "last_operation": getattr(session, "last_operation", None) if session is not None else None,
+        "last_forecast_target": getattr(session, "last_forecast_target", None) if session is not None else None,
         "cleaned": False,
         "insights": [],
         "question": question,
@@ -220,13 +226,16 @@ def _build_state(session, question=None, file_path=None):
         "chart_explanation": None,
         "hypotheses": [],
         "related_datasets": [],
-        "last_forecast_target": None,
         "plan": [],
         "dataset_profile": {},
         "dataset_explanation": [],
         "recommended_next_steps": [],
         "detected_patterns": [],
-        "dataset_topic": None,
+        "dataset_topic": dataset_topic,
+        "dataset_url": dataset_url,
+        "file_path": dataset_path if not file_path else None,
+        "has_active_dataset": dataset is not None,
+        "reuse_active_dataset": False,
         "chart_columns_used": [],
         "rows": int(dataset.shape[0]) if dataset is not None else 0,
         "columns": dataset.columns.tolist() if dataset is not None else [],
@@ -422,4 +431,43 @@ def sessions():
         return JSONResponse(
             status_code=500,
             content={"error": "Unable to retrieve sessions"},
+        )
+
+
+@app.get("/sessions/{session_id}")
+def session_detail(session_id: str):
+    """Return stored memory for a session so the UI can reopen it in Analyze."""
+    try:
+        session = get_session(session_id)
+        if session is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Session '{session_id}' not found"},
+            )
+
+        return sanitize_for_json(
+            {
+                "session_id": session.session_id,
+                "dataset_path": session.dataset_path or "",
+                "dataset_url": session.dataset_url or "",
+                "dataset_topic": session.dataset_topic or "",
+                "last_query": session.last_query or "",
+                "last_insight": session.last_insight or "",
+                "last_column": session.last_column or "",
+                "last_columns": session.last_columns or [],
+                "last_chart_type": session.last_chart_type or "",
+                "last_intent": session.last_intent or "",
+                "last_operation": session.last_operation or "",
+                "last_forecast_target": session.last_forecast_target or "",
+                "eda_summary": session.eda_summary or {},
+            }
+        )
+    except Exception as exc:
+        logger.error(
+            "Failed to load session detail",
+            extra={"action": "session_detail", "session_id": session_id, "error": str(exc)},
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Unable to retrieve session"},
         )

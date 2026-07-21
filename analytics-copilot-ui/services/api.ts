@@ -1,5 +1,5 @@
 import axios from "axios";
-import { AssistantResponse, UploadResponse } from "@/types";
+import { AssistantResponse, SessionDetail, UploadResponse } from "@/types";
 
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000",
@@ -30,5 +30,14 @@ export async function fetchSessions() {
     return response.data;
   } catch {
     return [];
+  }
+}
+
+export async function fetchSessionDetail(sessionId: string): Promise<SessionDetail | null> {
+  try {
+    const response = await api.get<SessionDetail>(`/sessions/${encodeURIComponent(sessionId)}`);
+    return response.data;
+  } catch {
+    return null;
   }
 }
