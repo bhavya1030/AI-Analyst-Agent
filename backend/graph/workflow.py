@@ -10,6 +10,8 @@ from backend.agents.cleaning_agent import cleaning_agent
 from backend.agents.conversation_context_agent import conversation_context_agent
 from backend.agents.dataset_topic_agent import dataset_topic_agent
 from backend.agents.dataset_search_agent import dataset_search_agent
+from backend.agents.dataset_retrieve_agent import dataset_retrieve_agent
+from backend.agents.dataset_prepare_agent import dataset_prepare_agent
 from backend.agents.pattern_detection_agent import pattern_detection_agent
 from backend.agents.eda_agent import eda_agent
 from backend.agents.viz_agent import viz_agent, run_multi_viz_agent
@@ -27,6 +29,8 @@ from backend.agents.dataset_embedding_search_agent import dataset_embedding_sear
 ROUTE_MAP = {
     "load_data": "load_data",
     "fetch_data": "fetch_data",
+    "retrieve_dataset": "retrieve_dataset",
+    "prepare_dataset": "prepare_dataset",
     "profile_data": "profile_data",
     "recommend_analysis": "recommend_analysis",
     "dataset_topic_detection": "dataset_topic_detection",
@@ -52,6 +56,8 @@ REGISTERED_NODES = {
     "planner",
     "load_data",
     "fetch_data",
+    "retrieve_dataset",
+    "prepare_dataset",
     "profile_data",
     "recommend_analysis",
     "dataset_topic_detection",
@@ -142,6 +148,14 @@ def build_graph():
 
     builder.add_node("load_data", _wrap_agent("load_data", data_agent))
     builder.add_node("fetch_data", _wrap_agent("fetch_data", data_engineer_agent))
+    builder.add_node(
+        "retrieve_dataset",
+        _wrap_agent("retrieve_dataset", dataset_retrieve_agent),
+    )
+    builder.add_node(
+        "prepare_dataset",
+        _wrap_agent("prepare_dataset", dataset_prepare_agent),
+    )
 
     builder.add_node("profile_data", _wrap_agent("profile_data", dataset_profile_agent))
     builder.add_node(
@@ -210,6 +224,8 @@ def build_graph():
         "planner",
         "load_data",
         "fetch_data",
+        "retrieve_dataset",
+        "prepare_dataset",
         "profile_data",
         "recommend_analysis",
         "dataset_topic_agent",

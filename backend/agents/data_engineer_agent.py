@@ -1,119 +1,89 @@
+"""Data Engineer Agent — load local dataset + prepare DataFrame only.
+
+Must NOT download from the internet or run multi-source search.
+Expects `local_path` (or session in-memory data / upload file_path) from the
+retrieval/prepare pipeline.
+"""
+
+from __future__ import annotations
+
 import re
+from pathlib import Path
 
 import pandas as pd
 
-from backend.agents.dataset_search_agent import dataset_search_agent
 from backend.core.logger import get_logger
-from backend.errors.error_types import DATASET_NOT_FOUND, DATASET_LOAD_FAILED
+from backend.errors.error_types import DATASET_LOAD_FAILED, DATASET_NOT_FOUND
 from backend.utils.data_acquisition import CONNECT_SOURCES_HINT, DEFAULT_ACQUISITION_OPTIONS
 from backend.utils.dataset_loader import load_dataset
-from backend.utils.dataset_resolver import looks_like_direct_url
 
 logger = get_logger(__name__)
 
 
 def data_engineer_agent(state):
-    """Download and prepare a dataset for downstream analytics agents.
+    """Load and prepare a dataset for analytics agents.
 
-    Responsibilities:
-    - resolve dataset URL (via search if needed) or user file/URL
-    - load CSV/Excel/JSON/Parquet
-    - standardize columns
-    - coerce types
-    - optional country/entity filter from user focus
-    - light cleaning (non-destructive)
-    - expose a ready-to-analyze DataFrame on state
-    - when discovery fails: guide upload / direct URL / connect source
+    Inputs (only):
+      - local_path / file_path / existing state['data']
+      - dataset_metadata (optional)
+
+    Never downloads remote URLs or invokes search/retrieval.
     """
     logger.info(
         "Data engineer agent executing",
         extra={"action": "fetch_data", "question": state.get("question")},
     )
 
-    # Session / prior step already provided a frame — prepare in place, unless
-    # the planner requested a reload for a newly named topic.
-    if state.get("data") is not None and not state.get("force_reload_dataset"):
+    must_reload = bool(state.get("force_reload_dataset") or state.get("topic_mismatch"))
+    metadata = state.get("dataset_metadata") or {}
+
+    # 1) Reuse in-memory frame for session continuity
+    if state.get("data") is not None and not must_reload:
         prepared = _prepare_dataframe(state["data"], state)
-        return _finalize_frame(state, prepared, dataset_url=state.get("dataset_url"))
+        return _finalize_frame(state, prepared)
 
-    # User-connected local file wins over remote discovery.
-    if state.get("file_path") and not state.get("force_reload_dataset"):
-        try:
-            df = load_dataset(state["file_path"])
-            df = _prepare_dataframe(df, state)
-            state["source"] = state.get("source") or "user_upload"
-            return _finalize_frame(state, df, dataset_url=None)
-        except Exception as e:
-            state["error"] = f"Dataset loading failed: {str(e)}"
-            state["error_type"] = DATASET_LOAD_FAILED
-            state["data"] = None
-            state["answer"] = (
-                f"Could not load your file ({state.get('file_path')}). {CONNECT_SOURCES_HINT}"
-            )
-            state["needs_user_data"] = True
-            state["data_acquisition_options"] = list(DEFAULT_ACQUISITION_OPTIONS)
-            state["stop"] = True
-            return state
+    # 2) Preferred: local_path from prepare pipeline
+    local_path = state.get("local_path") or metadata.get("local_path")
+    if local_path and Path(str(local_path)).is_file():
+        return _load_local(state, str(local_path), source=state.get("source") or "local_library")
 
-    dataset_url = state.get("dataset_url") if not state.get("force_reload_dataset") else None
-    if state.get("force_reload_dataset"):
-        # Allow search to pick a fresh URL for the new topic — never keep stale GDP/etc.
-        dataset_url = None
-        state["dataset_url"] = None
-        # Clear previous frame so a failed gold search cannot fall back to India GDP.
-        state["data"] = None
-        state["last_dataset"] = None
+    # 3) User upload path
+    file_path = state.get("file_path")
+    if file_path and Path(str(file_path)).is_file() and not must_reload:
+        return _load_local(state, str(file_path), source="user_upload")
 
-    # Direct URL embedded in the question (user connected a source).
-    if not dataset_url:
-        from_question = _url_from_question(state.get("question") or "")
-        if from_question:
-            dataset_url = from_question
-            state["dataset_url"] = from_question
-            state["source"] = "direct_url"
-
-    if not dataset_url:
-        state = dataset_search_agent(state)
-        dataset_url = state.get("dataset_url")
-
-    if not dataset_url:
-        # Do not keep the previous session frame when rediscovery failed.
-        state["data"] = None
-        state["last_dataset"] = None
-        if state.get("file_path") and not state.get("force_reload_dataset"):
-            return state
-
-        topic = state.get("dataset_topic") or "this topic"
-        message = state.get("answer") or (
-            f'I could not locate a suitable open dataset for "{topic}". {CONNECT_SOURCES_HINT}'
-        )
-        state["error"] = message
-        state["error_type"] = DATASET_NOT_FOUND
-        state["answer"] = message
-        state["needs_user_data"] = True
-        state["data_acquisition_options"] = state.get("data_acquisition_options") or list(
-            DEFAULT_ACQUISITION_OPTIONS
-        )
-        state["stop"] = True
-        return state
-
-    logger.info(
-        "Loading dataset",
-        extra={"action": "fetch_data", "dataset": dataset_url},
+    # 4) No remote download fallback — fail clearly
+    topic = state.get("dataset_topic") or metadata.get("topic") or "this topic"
+    message = (
+        state.get("error")
+        or f'No local dataset path available for "{topic}". '
+        f"The acquisition/retrieval pipeline must provide a local_path. {CONNECT_SOURCES_HINT}"
     )
+    state["error"] = message
+    state["error_type"] = DATASET_NOT_FOUND
+    state["answer"] = message
+    state["data"] = None
+    state["needs_user_data"] = True
+    state["data_acquisition_options"] = list(DEFAULT_ACQUISITION_OPTIONS)
+    state["stop"] = True
+    logger.warning(
+        "Data engineer missing local_path",
+        extra={"topic": topic, "local_path": local_path, "file_path": file_path},
+    )
+    return state
 
+
+def _load_local(state, path: str, *, source: str):
     try:
-        df = load_dataset(dataset_url)
+        df = load_dataset(path)
         df = _prepare_dataframe(df, state)
-        if looks_like_direct_url(dataset_url):
-            state["source"] = state.get("source") or "open_data"
-        return _finalize_frame(state, df, dataset_url=dataset_url)
-    except Exception as e:
-        topic = state.get("dataset_topic") or "this topic"
-        message = (
-            f'Found a candidate for "{topic}" but loading failed: {str(e)}. '
-            f"{CONNECT_SOURCES_HINT}"
-        )
+        state["local_path"] = path
+        state["source"] = source
+        # Keep download_url in metadata if present, but do not fetch it
+        return _finalize_frame(state, df)
+    except Exception as exc:
+        topic = state.get("dataset_topic") or "dataset"
+        message = f'Could not load local dataset for "{topic}": {exc}. {CONNECT_SOURCES_HINT}'
         state["error"] = message
         state["error_type"] = DATASET_LOAD_FAILED
         state["data"] = None
@@ -121,30 +91,22 @@ def data_engineer_agent(state):
         state["needs_user_data"] = True
         state["data_acquisition_options"] = list(DEFAULT_ACQUISITION_OPTIONS)
         state["stop"] = True
-        logger.error(
-            "Dataset loading failed",
-            extra={"action": "fetch_data", "dataset": dataset_url, "error": str(e)},
-        )
+        logger.error("Local dataset load failed", extra={"path": path, "error": str(exc)})
         return state
 
 
-def _url_from_question(question: str) -> str | None:
-    match = re.search(r"https?://[^\s<>\"']+", question or "")
-    if not match:
-        return None
-    url = match.group(0).rstrip(").,;]")
-    return url if looks_like_direct_url(url) else None
-
-
-def _finalize_frame(state, df: pd.DataFrame, dataset_url: str | None = None):
+def _finalize_frame(state, df: pd.DataFrame):
     state["data"] = df
     state["last_dataset"] = df
-    if dataset_url:
-        state["dataset_url"] = dataset_url
     state["rows"] = int(df.shape[0])
     state["columns"] = df.columns.tolist()
-    state["dataset_topic"] = state.get("dataset_topic") or "dataset discovery"
-    state["source"] = state.get("source") or "dataset_discovery"
+    meta = state.get("dataset_metadata") or {}
+    state["dataset_topic"] = state.get("dataset_topic") or meta.get("topic") or "dataset"
+    if meta.get("download_url") and not state.get("dataset_url"):
+        state["dataset_url"] = meta.get("download_url")
+    if meta.get("dataset_id") and not state.get("dataset_id"):
+        state["dataset_id"] = meta.get("dataset_id")
+    state["source"] = state.get("source") or meta.get("source") or "local"
     state["data_ready"] = True
     state.pop("error", None)
     state["error_type"] = None
@@ -152,56 +114,24 @@ def _finalize_frame(state, df: pd.DataFrame, dataset_url: str | None = None):
         "Dataset prepared successfully",
         extra={
             "action": "fetch_data",
-            "dataset": state.get("dataset_url"),
+            "path": state.get("local_path"),
             "rows": int(df.shape[0]),
             "columns": int(df.shape[1]),
         },
     )
-
-    # ChatGPT-style product memory: remember successful loads for future topics.
-    try:
-        from backend.memory.learned_datasets import learn_dataset
-
-        learn_url = state.get("dataset_url") or dataset_url
-        topic = state.get("dataset_topic") or ""
-        if learn_url and topic:
-            learned = learn_dataset(
-                topic=topic,
-                url=str(learn_url),
-                source=str(state.get("source") or state.get("dataset_source") or ""),
-                title=str(
-                    (state.get("dataset_discovery") or {}).get("title")
-                    or topic
-                ),
-                columns=list(df.columns)[:40],
-                notes=f"question={(state.get('question') or '')[:160]}",
-                expand_with_llm=True,
-            )
-            if learned:
-                state["dataset_learned"] = True
-                state["learned_aliases"] = learned.get("aliases") or []
-    except Exception as exc:
-        logger.warning(
-            "Dataset learning skipped",
-            extra={"error": str(exc)},
-        )
-
     return state
 
 
 def _prepare_dataframe(df: pd.DataFrame, state) -> pd.DataFrame:
     prepared = df.copy()
 
-    # Standardize column names: strip, collapse whitespace.
     prepared.columns = [
         re.sub(r"\s+", " ", str(col)).strip() for col in prepared.columns
     ]
 
-    # Drop completely empty rows/columns only (non-destructive).
     prepared = prepared.dropna(axis=0, how="all")
     prepared = prepared.dropna(axis=1, how="all")
 
-    # Coerce obvious year/value columns.
     for col in prepared.columns:
         lower = str(col).lower()
         if lower in {"year", "date", "time", "period"}:
@@ -211,7 +141,6 @@ def _prepare_dataframe(df: pd.DataFrame, state) -> pd.DataFrame:
         elif lower in {"value", "gdp", "amount", "total", "population"}:
             prepared[col] = pd.to_numeric(prepared[col], errors="coerce")
 
-    # Optional country focus (e.g. Analyze India's GDP).
     focus_country = state.get("focus_country")
     if not focus_country:
         focus_country = _infer_country_from_text(
@@ -226,7 +155,6 @@ def _prepare_dataframe(df: pd.DataFrame, state) -> pd.DataFrame:
                 re.escape(focus_country), case=False, na=False
             )
         filtered = prepared.loc[mask]
-        # Only apply filter when we still have a usable series.
         if not filtered.empty and len(filtered) >= 2:
             prepared = filtered.copy()
             state["focus_country"] = focus_country
@@ -276,6 +204,9 @@ def _infer_country_from_text(text: str) -> str | None:
         "australia": "Australia",
     }
     for pattern, label in sorted(mapping.items(), key=lambda item: len(item[0]), reverse=True):
-        if re.search(pattern if pattern.startswith("\\") or " " in pattern else rf"(?<![a-z0-9]){re.escape(pattern)}(?![a-z0-9])", normalized):
+        if re.search(
+            pattern if pattern.startswith("\\") or " " in pattern else rf"(?<![a-z0-9]){re.escape(pattern)}(?![a-z0-9])",
+            normalized,
+        ):
             return label
     return None

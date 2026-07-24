@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     FORECAST_HORIZON: int = 10
     EMBEDDING_MODEL_NAME: str = "sentence-transformers/all-MiniLM-L6-v2"
     SIMILARITY_THRESHOLD: int = 55
+    # Semantic retrieval (cosine / IP on normalized embeddings, 0–1)
+    SEMANTIC_SEARCH_TOP_K: int = 5
+    SEMANTIC_MIN_SCORE: float = 0.35
     CHART_DEFAULT_LIMIT: int = 4
     OLLAMA_MODEL: str = "qwen3:4b"
     OLLAMA_SERVER_URL: str = "http://localhost:11434"
@@ -24,8 +27,9 @@ class Settings(BaseSettings):
     # Local LLM calls are optional. Deterministic routing keeps the copilot responsive.
     USE_LLM_INTENT: bool = False
     USE_LLM_PLANNER: bool = False
-    # Topic extraction via Ollama for free-form / unknown subjects (ChatGPT-like).
-    USE_LLM_TOPIC: bool = True
+    # Topic extraction via Ollama only when rule-based topic is weak/empty.
+    # Keep False for snappy UX; set True if you want freer natural-language topics.
+    USE_LLM_TOPIC: bool = False
     # Persist successful topic→dataset mappings (product memory, not weight training).
     LEARN_DATASETS: bool = True
     # Use Ollama to expand aliases when learning a new dataset topic (can be slow).

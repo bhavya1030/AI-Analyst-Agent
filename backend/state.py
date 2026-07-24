@@ -39,3 +39,13 @@ class AnalystState(TypedDict, total=False):
     search_queries: list[str]
     source: Optional[str]
     dataset_source: Optional[str]
+    # New data pipeline (retrieval → prepare → engineer)
+    local_path: Optional[str]
+    dataset_id: Optional[str]
+    registry_id: Optional[str]
+    dataset_metadata: dict[str, Any]
+    retrieval_result: dict[str, Any]
+    acquisition_result: dict[str, Any]
+    dataset_intelligence: dict[str, Any]
+    learning_result: dict[str, Any]
+    session_dataset_topic: Optional[str]

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>AI Analytics Copilot — Evaluation Dashboard</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 24px; background: #0f1419; color: #e7ecf3; }
+  h1,h2 { color: #fff; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(160px,1fr)); gap: 12px; }
+  .card { background: #1a2332; border-radius: 10px; padding: 14px; }
+  .card .v { font-size: 1.6rem; font-weight: 700; }
+  .passed { color: #3dd68c; }
+  .failed { color: #f07178; }
+  .warning { color: #ffcc66; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 0.9rem; }
+  th, td { border-bottom: 1px solid #2a3548; padding: 8px; text-align: left; }
+  th { color: #9fb3c8; }
+  tr.passed td:nth-child(3) { color: #3dd68c; }
+  tr.failed td:nth-child(3) { color: #f07178; }
+  tr.warning td:nth-child(3) { color: #ffcc66; }
+  .bar-row { display: grid; grid-template-columns: 100px 1fr 48px; gap: 8px; align-items: center; margin: 6px 0; }
+  .bar { background: #2a3548; border-radius: 6px; height: 10px; overflow: hidden; }
+  .bar > div { background: linear-gradient(90deg,#3d8bfd,#3dd68c); height: 100%; }
+  .meta { color: #9fb3c8; margin-bottom: 18px; }
+</style>
+</head>
+<body>
+  <h1>AI Analytics Copilot — Evaluation Dashboard</h1>
+  <div class="meta">Mode: component ·
+    Finished: 2026-07-24T19:42:48.471538+00:00 ·
+    Duration: 66.244s</div>
+  <div class="cards">
+    <div class="card"><div>Total</div><div class="v">10</div></div>
+    <div class="card"><div>Passed</div><div class="v passed">10</div></div>
+    <div class="card"><div>Failed</div><div class="v failed">0</div></div>
+    <div class="card"><div>Warnings</div><div class="v warning">0</div></div>
+    <div class="card"><div>Success rate</div><div class="v">100.0%</div></div>
+    <div class="card"><div>Avg latency</div><div class="v">6.62s</div></div>
+    <div class="card"><div>Avg confidence</div><div class="v">0.75</div></div>
+    <div class="card"><div>Peak mem</div><div class="v">0 MB</div></div>
+  </div>
+  <h2>Capability scores</h2>
+  <div class='bar-row'><span>Retrieval</span><div class='bar'><div style='width:94.0%'></div></div><span>0.94</span></div><div class='bar-row'><span>Selection</span><div class='bar'><div style='width:100.0%'></div></div><span>1.00</span></div><div class='bar-row'><span>Semantic</span><div class='bar'><div style='width:0.0%'></div></div><span>0.00</span></div><div class='bar-row'><span>Planner</span><div class='bar'><div style='width:84.0%'></div></div><span>0.84</span></div><div class='bar-row'><span>Context</span><div class='bar'><div style='width:100.0%'></div></div><span>1.00</span></div><div class='bar-row'><span>Join</span><div class='bar'><div style='width:92.0%'></div></div><span>0.92</span></div><div class='bar-row'><span>Forecast</span><div class='bar'><div style='width:100.0%'></div></div><span>1.00</span></div><div class='bar-row'><span>Charts</span><div class='bar'><div style='width:92.9%'></div></div><span>0.93</span></div><div class='bar-row'><span>Explain</span><div class='bar'><div style='width:83.3%'></div></div><span>0.83</span></div><div class='bar-row'><span>Recovery</span><div class='bar'><div style='width:70.0%'></div></div><span>0.70</span></div>
+  <h2>By category</h2>
+  <table>
+    <tr><th>Category</th><th>Total</th><th>Passed</th><th>Failed</th><th>Warnings</th><th>Pass rate</th></tr>
+    <tr><td>10_stress</td><td>1</td><td>1</td><td>0</td><td>0</td><td>100.0%</td></tr><tr><td>1_single_dataset</td><td>1</td><td>1</td><td>0</td><td>0</td><td>100.0%</td></tr><tr><td>2_comparison</td><td>1</td><td>1</td><td>0</td><td>0</td><td>100.0%</td></tr><tr><td>3_correlation</td><td>1</td><td>1</td><td>0</td><td>0</td><td>100.0%</td></tr><tr><td>4_forecasting</td><td>1</td><td>1</td><td>0</td><td>0</td><td>100.0%</td></tr><tr><td>5_multi_dataset</td><td>1</td><td>1</td><td>0</td><td>0</td><td>100.0%</td></tr><tr><td>6_followup</td><td>1</td><td>1</td><td>0</td><td>0</td><td>100.0%</td></tr><tr><td>7_discovery</td><td>1</td><td>1</td><td>0</td><td>0</td><td>100.0%</td></tr><tr><td>8_explainability</td><td>1</td><td>1</td><td>0</td><td>0</td><td>100.0%</td></tr><tr><td>9_edge_cases</td><td>1</td><td>1</td><td>0</td><td>0</td><td>100.0%</td></tr>
+  </table>
+  <h2>Cases</h2>
+  <table>
+    <tr><th>ID</th><th>Category</th><th>Status</th><th>Time (s)</th><th>Conf</th><th>Question</th></tr>
+    <tr class='passed'><td>1</td><td>1_single_dataset</td><td>passed</td><td>56.10</td><td>0.85</td><td>Analyze India's GDP from 2000–2024.</td></tr><tr class='passed'><td>11</td><td>2_comparison</td><td>passed</td><td>0.08</td><td>0.95</td><td>Compare India and China GDP.</td></tr><tr class='passed'><td>21</td><td>3_correlation</td><td>passed</td><td>4.64</td><td>0.85</td><td>Relationship between rainfall and crop yield.</td></tr><tr class='passed'><td>31</td><td>4_forecasting</td><td>passed</td><td>3.37</td><td>0.95</td><td>Forecast India's GDP.</td></tr><tr class='passed'><td>41</td><td>5_multi_dataset</td><td>passed</td><td>0.10</td><td>0.85</td><td>Compare GDP, Inflation and Population.</td></tr><tr class='passed'><td>51</td><td>6_followup</td><td>passed</td><td>0.04</td><td>0.75</td><td>Analyze India's GDP.</td></tr><tr class='passed'><td>61</td><td>7_discovery</td><td>passed</td><td>1.80</td><td>0.60</td><td>Find a dataset about EV sales.</td></tr><tr class='passed'><td>71</td><td>8_explainability</td><td>passed</td><td>0.00</td><td>0.72</td><td>Why did you choose this dataset?</td></tr><tr class='passed'><td>81</td><td>9_edge_cases</td><td>passed</td><td>0.02</td><td>0.20</td><td>Analyze GDP on Mars.</td></tr><tr class='passed'><td>91</td><td>10_stress</td><td>passed</td><td>0.05</td><td>0.80</td><td>Run 20 analyses simultaneously.</td></tr>
+  </table>
+</body>
+</html>
