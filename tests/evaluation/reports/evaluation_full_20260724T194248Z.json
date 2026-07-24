@@ -1,0 +1,1829 @@
+{
+  "meta": {
+    "mode": "component",
+    "started_at": "2026-07-24T19:41:42.227140+00:00",
+    "finished_at": "2026-07-24T19:42:48.471538+00:00",
+    "total_duration": 66.244,
+    "n_cases": 10
+  },
+  "metrics": {
+    "total_tests": 10,
+    "passed": 10,
+    "failed": 0,
+    "warnings": 0,
+    "skipped": 0,
+    "average_response_time": 6.6217,
+    "average_retrieval_time": 6.2231,
+    "average_acquisition_time": 0.0157,
+    "average_analysis_time": 0.0106,
+    "average_confidence": 0.752,
+    "dataset_retrieval_accuracy": 0.94,
+    "dataset_selection_accuracy": 1.0,
+    "semantic_search_accuracy": 0.0,
+    "planner_accuracy": 0.84,
+    "context_resolution_accuracy": 1.0,
+    "join_accuracy": 0.92,
+    "forecast_execution": 1.0,
+    "chart_generation": 0.9286,
+    "explanation_quality": 0.8333,
+    "failure_recovery": 0.7,
+    "success_rate": 1.0,
+    "p95_response_time": 56.1004,
+    "max_response_time": 56.1004,
+    "average_memory_mb": 0.0,
+    "peak_memory_mb": 0.0,
+    "failure_reasons": [],
+    "by_category": {
+      "1_single_dataset": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "warnings": 0,
+        "pass_rate": 1.0
+      },
+      "2_comparison": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "warnings": 0,
+        "pass_rate": 1.0
+      },
+      "3_correlation": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "warnings": 0,
+        "pass_rate": 1.0
+      },
+      "4_forecasting": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "warnings": 0,
+        "pass_rate": 1.0
+      },
+      "5_multi_dataset": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "warnings": 0,
+        "pass_rate": 1.0
+      },
+      "6_followup": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "warnings": 0,
+        "pass_rate": 1.0
+      },
+      "7_discovery": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "warnings": 0,
+        "pass_rate": 1.0
+      },
+      "8_explainability": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "warnings": 0,
+        "pass_rate": 1.0
+      },
+      "9_edge_cases": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "warnings": 0,
+        "pass_rate": 1.0
+      },
+      "10_stress": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "warnings": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "records": [
+    {
+      "id": 1,
+      "category": "1_single_dataset",
+      "question": "Analyze India's GDP from 2000\u20132024.",
+      "turns": [
+        "Analyze India's GDP from 2000\u20132024."
+      ],
+      "status": "passed",
+      "retrieved_datasets": [
+        {
+          "topic": "India GDP",
+          "status": "API_HIT",
+          "dataset_id": null,
+          "local_path": "C:\\Users\\abhis\\projects\\AI-Analyst-Agent\\tests\\evaluation\\data\\india_gdp.csv",
+          "download_url": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
+          "provider": "official_api:World Bank",
+          "reason": "Official API/source match via World Bank.",
+          "metadata": {
+            "title": "World Bank GDP (open CSV)",
+            "topic": "India GDP",
+            "download_url": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
+            "source": "World Bank",
+            "source_type": "API",
+            "description": "Country-level annual GDP series suitable for trend analysis.",
+            "file_format": "csv",
+            "tags": [
+              "gdp",
+              "macro",
+              "world bank"
+            ]
+          },
+          "source": "World Bank",
+          "source_url": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
+          "acquisition": true
+        }
+      ],
+      "retrieval_status": "API_HIT",
+      "acquisition_success": true,
+      "planner_output": {
+        "topics": [
+          "India GDP"
+        ],
+        "intent": "single",
+        "metrics": [
+          "gdp"
+        ],
+        "entities": [
+          "India"
+        ],
+        "is_multi": false,
+        "requests": [
+          {
+            "topic": "India GDP",
+            "question": "Analyze India's GDP from 2000\u20132024."
+          }
+        ]
+      },
+      "selected_tools": [
+        {
+          "tool_id": "forecast",
+          "name": "Forecast",
+          "category": "predictive",
+          "score": 0.28,
+          "reason": "Matched 'Forecast' (score=0.28); profile: time_series, numeric_metric",
+          "produces_chart": true,
+          "order": 1,
+          "tags": [
+            "forecast",
+            "time"
+          ],
+          "metadata": {}
+        },
+        {
+          "tool_id": "trend",
+          "name": "Trend",
+          "category": "time_series",
+          "score": 0.28,
+          "reason": "Matched 'Trend' (score=0.28); profile: time_series, numeric_metric",
+          "produces_chart": true,
+          "order": 2,
+          "tags": [
+            "time",
+            "eda"
+          ],
+          "metadata": {}
+        }
+      ],
+      "execution_time": 56.1004,
+      "retrieval_time": 52.3771,
+      "acquisition_time": 0.0565,
+      "analysis_time": 0.0203,
+      "generated_charts": [
+        {
+          "tool_id": "forecast",
+          "planned": true
+        },
+        {
+          "tool_id": "trend",
+          "planned": true
+        }
+      ],
+      "explanation": {
+        "summary": "Evaluation stub answer for: Analyze India's GDP from 2000\u20132024. Used 1 dataset(s), 2 analytical tool(s).",
+        "reasoning_summary": "The user asked: \u201cAnalyze India's GDP from 2000\u20132024.\u201d. Analysis used 1 dataset(s): India GDP. Analytical steps included: Forecast, Trend. Result snapshot: Evaluation stub answer for: Analyze India's GDP from 2000\u20132024. This explanation is derived from pipeline metadata (datasets, plan, joins, tools), not from re-running the analysis.",
+        "confidence": 1.0,
+        "explanation_text": "Evaluation stub answer for: Analyze India's GDP from 2000\u20132024. Used 1 dataset(s), 2 analytical tool(s). Data: India GDP. Methods: Forecast, Trend. Confidence: 100%.",
+        "short_text": "Evaluation stub answer for: Analyze India's GDP from 2000\u20132024. Used 1 dataset(s), 2 analytical tool(s). Data: India GDP. Methods: Forecast, Trend. Confidence: 100%."
+      },
+      "confidence": 0.85,
+      "errors": [],
+      "warnings": [],
+      "join_plan": {},
+      "context_resolution": {},
+      "crashed": false,
+      "graceful_failure": false,
+      "context_cleared": false,
+      "forecast_ran": true,
+      "selection_ok": true,
+      "semantic_score": null,
+      "memory_mb": 0.0,
+      "scores": {
+        "retrieval": 1.0,
+        "selection": 1.0,
+        "semantic": null,
+        "planner": 0.8,
+        "context": null,
+        "join": null,
+        "forecast": null,
+        "chart": 1.0,
+        "explanation": 0.8,
+        "failure_recovery": null,
+        "notes": [],
+        "mean": 0.92
+      },
+      "meta": {
+        "research_topics": [
+          "India GDP"
+        ]
+      }
+    },
+    {
+      "id": 11,
+      "category": "2_comparison",
+      "question": "Compare India and China GDP.",
+      "turns": [
+        "Compare India and China GDP."
+      ],
+      "status": "passed",
+      "retrieved_datasets": [
+        {
+          "topic": "India GDP",
+          "status": "API_HIT",
+          "dataset_id": null,
+          "local_path": "C:\\Users\\abhis\\projects\\AI-Analyst-Agent\\tests\\evaluation\\data\\india_gdp.csv",
+          "download_url": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
+          "provider": "official_api:World Bank",
+          "reason": "Official API/source match via World Bank.",
+          "metadata": {
+            "title": "World Bank GDP (open CSV)",
+            "topic": "India GDP",
+            "download_url": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
+            "source": "World Bank",
+            "source_type": "API",
+            "description": "Country-level annual GDP series suitable for trend analysis.",
+            "file_format": "csv",
+            "tags": [
+              "gdp",
+              "macro",
+              "world bank"
+            ]
+          },
+          "source": "World Bank",
+          "source_url": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
+          "acquisition": true
+        },
+        {
+          "topic": "China GDP",
+          "status": "API_HIT",
+          "dataset_id": null,
+          "local_path": "C:\\Users\\abhis\\projects\\AI-Analyst-Agent\\tests\\evaluation\\data\\india_gdp.csv",
+          "download_url": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
+          "provider": "official_api:World Bank",
+          "reason": "Official API/source match via World Bank.",
+          "metadata": {
+            "title": "World Bank GDP (open CSV)",
+            "topic": "China GDP",
+            "download_url": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
+            "source": "World Bank",
+            "source_type": "API",
+            "description": "Country-level annual GDP series suitable for trend analysis.",
+            "file_format": "csv",
+            "tags": [
+              "gdp",
+              "macro",
+              "world bank"
+            ]
+          },
+          "source": "World Bank",
+          "source_url": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
+          "acquisition": true
+        }
+      ],
+      "retrieval_status": "API_HIT",
+      "acquisition_success": true,
+      "planner_output": {
+        "topics": [
+          "India GDP",
+          "China GDP"
+        ],
+        "intent": "comparison",
+        "metrics": [
+          "gdp"
+        ],
+        "entities": [
+          "India",
+          "China"
+        ],
+        "is_multi": false,
+        "requests": [
+          {
+            "topic": "India GDP",
+            "question": "Compare India and China GDP."
+          }
+        ],
+        "research_objective": {
+          "objective_type": "comparison",
+          "summary": "Compare GDP across entities or series for India, China.",
+          "primary_metric": "GDP",
+          "entities": [
+            "India",
+            "China"
+          ],
+          "secondary_metrics": [],
+          "time_horizon": null,
+          "notes": []
+        },
+        "mandatory_topics": [
+          "India GDP",
+          "China GDP"
+        ]
+      },
+      "selected_tools": [
+        {
+          "tool_id": "comparison",
+          "name": "Comparison",
+          "category": "general",
+          "score": 0.34,
+          "reason": "Matched 'Comparison' (score=0.34); keywords: compare; profile: multi_metric, numeric_metric",
+          "produces_chart": true,
+          "order": 1,
+          "tags": [
+            "eda",
+            "compare"
+          ],
+          "metadata": {}
+        },
+        {
+          "tool_id": "forecast",
+          "name": "Forecast",
+          "category": "predictive",
+          "score": 0.28,
+          "reason": "Matched 'Forecast' (score=0.28); profile: time_series, numeric_metric",
+          "produces_chart": true,
+          "order": 2,
+          "tags": [
+            "forecast",
+            "time"
+          ],
+          "metadata": {}
+        },
+        {
+          "tool_id": "trend",
+          "name": "Trend",
+          "category": "time_series",
+          "score": 0.28,
+          "reason": "Matched 'Trend' (score=0.28); profile: time_series, numeric_metric",
+          "produces_chart": true,
+          "order": 3,
+          "tags": [
+            "time",
+            "eda"
+          ],
+          "metadata": {}
+        }
+      ],
+      "execution_time": 0.0755,
+      "retrieval_time": 0.0467,
+      "acquisition_time": 0.0037,
+      "analysis_time": 0.0223,
+      "generated_charts": [
+        {
+          "tool_id": "comparison",
+          "planned": true
+        },
+        {
+          "tool_id": "forecast",
+          "planned": true
+        },
+        {
+          "tool_id": "trend",
+          "planned": true
+        }
+      ],
+      "explanation": {
+        "summary": "Evaluation stub answer for: Compare India and China GDP. Used 2 dataset(s), 3 analytical tool(s).",
+        "reasoning_summary": "The user asked: \u201cCompare India and China GDP.\u201d. Analysis used 2 dataset(s): India GDP, China GDP. Datasets were combined using `outer` on Country, Year. Analytical steps included: Comparison, Forecast, Trend. Result snapshot: Evaluation stub answer for: Compare India and China GDP. This explanation is derived from pipeline metadata (datasets, plan, joins, tools), not from re-running the analysis.",
+        "confidence": 1.0,
+        "explanation_text": "Evaluation stub answer for: Compare India and China GDP. Used 2 dataset(s), 3 analytical tool(s). Data: India GDP, China GDP. Methods: Comparison, Forecast, Trend. Confidence: 100%.",
+        "short_text": "Evaluation stub answer for: Compare India and China GDP. Used 2 dataset(s), 3 analytical tool(s). Data: India GDP, China GDP. Methods: Comparison, Forecast, Trend. Confidence: 100%."
+      },
+      "confidence": 0.95,
+      "errors": [],
+      "warnings": [],
+      "join_plan": {
+        "strategy": "outer",
+        "join_keys": [
+          "Country",
+          "Year"
+        ],
+        "datasets_merged": 2,
+        "notes": [
+          "Evaluated join plan (component mode)"
+        ]
+      },
+      "context_resolution": {},
+      "crashed": false,
+      "graceful_failure": false,
+      "context_cleared": false,
+      "forecast_ran": true,
+      "selection_ok": true,
+      "semantic_score": null,
+      "memory_mb": 0.0,
+      "scores": {
+        "retrieval": 1.0,
+        "selection": 1.0,
+        "semantic": null,
+        "planner": 1.0,
+        "context": null,
+        "join": 1.0,
+        "forecast": null,
+        "chart": 1.0,
+        "explanation": 0.8,
+        "failure_recovery": null,
+        "notes": [],
+        "mean": 0.9667
+      },
+      "meta": {
+        "research_topics": [
+          "India GDP",
+          "China GDP"
+        ]
+      }
+    },
+    {
+      "id": 21,
+      "category": "3_correlation",
+      "question": "Relationship between rainfall and crop yield.",
+      "turns": [
+        "Relationship between rainfall and crop yield."
+      ],
+      "status": "passed",
+      "retrieved_datasets": [
+        {
+          "topic": "Rainfall",
+          "status": "API_HIT",
+          "dataset_id": null,
+          "local_path": "C:\\Users\\abhis\\projects\\AI-Analyst-Agent\\tests\\evaluation\\data\\india_rainfall.csv",
+          "download_url": "https://data.oecd.org/searchresults/?q=rainfall",
+          "provider": "official_api:OECD",
+          "reason": "Official API/source match via OECD.",
+          "metadata": {
+            "title": "OECD search: Rainfall",
+            "topic": "Rainfall",
+            "download_url": "https://data.oecd.org/searchresults/?q=rainfall",
+            "source": "OECD",
+            "source_type": "Web",
+            "description": "OECD data search landing page (may require further resource selection).",
+            "file_format": "unknown",
+            "tags": [
+              "oecd",
+              "search"
+            ]
+          },
+          "source": "OECD",
+          "source_url": "https://data.oecd.org/searchresults/?q=rainfall",
+          "acquisition": true
+        },
+        {
+          "topic": "Crop Yield",
+          "status": "API_HIT",
+          "dataset_id": null,
+          "local_path": "C:\\Users\\abhis\\projects\\AI-Analyst-Agent\\tests\\evaluation\\data\\crop_yield.csv",
+          "download_url": "https://data.oecd.org/searchresults/?q=yield+crop",
+          "provider": "official_api:OECD",
+          "reason": "Official API/source match via OECD.",
+          "metadata": {
+            "title": "OECD search: Crop Yield",
+            "topic": "Crop Yield",
+            "download_url": "https://data.oecd.org/searchresults/?q=yield+crop",
+            "source": "OECD",
+            "source_type": "Web",
+            "description": "OECD data search landing page (may require further resource selection).",
+            "file_format": "unknown",
+            "tags": [
+              "oecd",
+              "search"
+            ]
+          },
+          "source": "OECD",
+          "source_url": "https://data.oecd.org/searchresults/?q=yield+crop",
+          "acquisition": true
+        }
+      ],
+      "retrieval_status": "API_HIT",
+      "acquisition_success": true,
+      "planner_output": {
+        "topics": [
+          "Rainfall",
+          "Crop Yield"
+        ],
+        "intent": "correlation",
+        "metrics": [
+          "rainfall crop yield"
+        ],
+        "entities": [],
+        "is_multi": false,
+        "requests": [
+          {
+            "topic": "rainfall crop yield",
+            "question": "Relationship between rainfall and crop yield."
+          }
+        ],
+        "research_objective": {
+          "objective_type": "correlation",
+          "summary": "Measure relationships involving Rainfall for the subject.",
+          "primary_metric": "Rainfall",
+          "entities": [],
+          "secondary_metrics": [
+            "Crop Yield"
+          ],
+          "time_horizon": null,
+          "notes": []
+        },
+        "mandatory_topics": [
+          "Rainfall",
+          "Crop Yield"
+        ]
+      },
+      "selected_tools": [
+        {
+          "tool_id": "correlation",
+          "name": "Correlation",
+          "category": "relationship",
+          "score": 0.6,
+          "reason": "Matched 'Correlation' (score=0.60); keywords: relationship, between",
+          "produces_chart": true,
+          "order": 1,
+          "tags": [
+            "stats",
+            "relationship"
+          ],
+          "metadata": {}
+        },
+        {
+          "tool_id": "regression",
+          "name": "Regression",
+          "category": "relationship",
+          "score": 0.6,
+          "reason": "Matched 'Regression' (score=0.60); keywords: relationship between",
+          "produces_chart": true,
+          "order": 2,
+          "tags": [
+            "stats",
+            "model"
+          ],
+          "metadata": {}
+        },
+        {
+          "tool_id": "scatter_plot",
+          "name": "Scatter Plot",
+          "category": "visualization",
+          "score": 0.24,
+          "reason": "Matched 'Scatter Plot' (score=0.24); co-selected as companion tool",
+          "produces_chart": true,
+          "order": 3,
+          "tags": [
+            "chart",
+            "relationship"
+          ],
+          "metadata": {}
+        },
+        {
+          "tool_id": "visualization",
+          "name": "Visualization",
+          "category": "visualization",
+          "score": 0.16,
+          "reason": "Matched 'Visualization' (score=0.16); profile: numeric_metric, time; co-selected as companion tool",
+          "produces_chart": true,
+          "order": 4,
+          "tags": [
+            "chart"
+          ],
+          "metadata": {}
+        },
+        {
+          "tool_id": "forecast",
+          "name": "Forecast",
+          "category": "predictive",
+          "score": 0.28,
+          "reason": "Matched 'Forecast' (score=0.28); profile: time_series, numeric_metric",
+          "produces_chart": true,
+          "order": 5,
+          "tags": [
+            "forecast",
+            "time"
+          ],
+          "metadata": {}
+        },
+        {
+          "tool_id": "trend",
+          "name": "Trend",
+          "category": "time_series",
+          "score": 0.28,
+          "reason": "Matched 'Trend' (score=0.28); profile: time_series, numeric_metric",
+          "produces_chart": true,
+          "order": 6,
+          "tags": [
+            "time",
+            "eda"
+          ],
+          "metadata": {}
+        }
+      ],
+      "execution_time": 4.6402,
+      "retrieval_time": 4.5867,
+      "acquisition_time": 0.046,
+      "analysis_time": 0.0045,
+      "generated_charts": [
+        {
+          "tool_id": "correlation",
+          "planned": true
+        },
+        {
+          "tool_id": "regression",
+          "planned": true
+        },
+        {
+          "tool_id": "scatter_plot",
+          "planned": true
+        },
+        {
+          "tool_id": "visualization",
+          "planned": true
+        },
+        {
+          "tool_id": "forecast",
+          "planned": true
+        },
+        {
+          "tool_id": "trend",
+          "planned": true
+        }
+      ],
+      "explanation": {
+        "summary": "Evaluation stub answer for: Relationship between rainfall and crop yield. Used 2 dataset(s), 6 analytical tool(s).",
+        "reasoning_summary": "The user asked: \u201cRelationship between rainfall and crop yield.\u201d. Analysis used 2 dataset(s): Rainfall, Crop Yield. Datasets were combined using `outer` on Country, Year. Analytical steps included: Correlation, Regression, Scatter Plot, Visualization, Forecast, Trend. Result snapshot: Evaluation stub answer for: Relationship between rainfall and crop yield. This explanation is derived from pipeline metadata (datasets, plan, joins, tools), not from re-running the analysis.",
+        "confidence": 1.0,
+        "explanation_text": "Evaluation stub answer for: Relationship between rainfall and crop yield. Used 2 dataset(s), 6 analytical tool(s). Data: Rainfall, Crop Yield. Methods: Correlation, Regression, Scatter Plot, Visualization. Confidence: 100%.",
+        "short_text": "Evaluation stub answer for: Relationship between rainfall and crop yield. Used 2 dataset(s), 6 analytical tool(s). Data: Rainfall, Crop Yield. Methods: Correlation, Regression, Scatter Plot, Visualization. Confidence: 100%."
+      },
+      "confidence": 0.85,
+      "errors": [],
+      "warnings": [],
+      "join_plan": {
+        "strategy": "outer",
+        "join_keys": [
+          "Country",
+          "Year"
+        ],
+        "datasets_merged": 2,
+        "notes": [
+          "Evaluated join plan (component mode)"
+        ]
+      },
+      "context_resolution": {},
+      "crashed": false,
+      "graceful_failure": false,
+      "context_cleared": false,
+      "forecast_ran": true,
+      "selection_ok": true,
+      "semantic_score": null,
+      "memory_mb": 0.0,
+      "scores": {
+        "retrieval": 1.0,
+        "selection": 1.0,
+        "semantic": null,
+        "planner": 1.0,
+        "context": null,
+        "join": 1.0,
+        "forecast": null,
+        "chart": 1.0,
+        "explanation": 0.8,
+        "failure_recovery": null,
+        "notes": [],
+        "mean": 0.9667
+      },
+      "meta": {
+        "research_topics": [
+          "Rainfall",
+          "Crop Yield"
+        ]
+      }
+    },
+    {
+      "id": 31,
+      "category": "4_forecasting",
+      "question": "Forecast India's GDP.",
+      "turns": [
+        "Forecast India's GDP."
+      ],
+      "status": "passed",
+      "retrieved_datasets": [
+        {
+          "topic": "India GDP",
+          "status": "API_HIT",
+          "dataset_id": null,
+          "local_path": "C:\\Users\\abhis\\projects\\AI-Analyst-Agent\\tests\\evaluation\\data\\india_gdp.csv",
+          "download_url": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
+          "provider": "official_api:World Bank",
+          "reason": "Official API/source match via World Bank.",
+          "metadata": {
+            "title": "World Bank GDP (open CSV)",
+            "topic": "India GDP",
+            "download_url": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
+            "source": "World Bank",
+            "source_type": "API",
+            "description": "Country-level annual GDP series suitable for trend analysis.",
+            "file_format": "csv",
+            "tags": [
+              "gdp",
+              "macro",
+              "world bank"
+            ]
+          },
+          "source": "World Bank",
+          "source_url": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
+          "acquisition": true
+        },
+        {
+          "topic": "India Exports",
+          "status": "API_HIT",
+          "dataset_id": null,
+          "local_path": "C:\\Users\\abhis\\projects\\AI-Analyst-Agent\\tests\\evaluation\\data\\india_gdp.csv",
+          "download_url": "https://data.oecd.org/searchresults/?q=exports+india",
+          "provider": "official_api:OECD",
+          "reason": "Official API/source match via OECD.",
+          "metadata": {
+            "title": "OECD search: India Exports",
+            "topic": "India Exports",
+            "download_url": "https://data.oecd.org/searchresults/?q=exports+india",
+            "source": "OECD",
+            "source_type": "Web",
+            "description": "OECD data search landing page (may require further resource selection).",
+            "file_format": "unknown",
+            "tags": [
+              "oecd",
+              "search"
+            ]
+          },
+          "source": "OECD",
+          "source_url": "https://data.oecd.org/searchresults/?q=exports+india",
+          "acquisition": true
+        },
+        {
+          "topic": "India Inflation",
+          "status": "API_HIT",
+          "dataset_id": null,
+          "local_path": "C:\\Users\\abhis\\projects\\AI-Analyst-Agent\\tests\\evaluation\\data\\india_inflation.csv",
+          "download_url": "https://raw.githubusercontent.com/datasets/inflation/master/data/cpi.csv",
+          "provider": "official_api:World Bank",
+          "reason": "Official API/source match via World Bank.",
+          "metadata": {
+            "title": "Global CPI / Inflation",
+            "topic": "India Inflation",
+            "download_url": "https://raw.githubusercontent.com/datasets/inflation/master/data/cpi.csv",
+            "source": "World Bank",
+            "source_type": "API",
+            "description": "Consumer price inflation series.",
+            "file_format": "csv",
+            "tags": [
+              "inflation",
+              "cpi"
+            ]
+          },
+          "source": "World Bank",
+          "source_url": "https://raw.githubusercontent.com/datasets/inflation/master/data/cpi.csv",
+          "acquisition": true
+        },
+        {
+          "topic": "India Interest Rates",
+          "status": "API_HIT",
+          "dataset_id": null,
+          "local_path": "C:\\Users\\abhis\\projects\\AI-Analyst-Agent\\tests\\evaluation\\data\\india_gdp.csv",
+          "download_url": "https://data.oecd.org/searchresults/?q=interest+rates+india",
+          "provider": "official_api:OECD",
+          "reason": "Official API/source match via OECD.",
+          "metadata": {
+            "title": "OECD search: India Interest Rates",
+            "topic": "India Interest Rates",
+            "download_url": "https://data.oecd.org/searchresults/?q=interest+rates+india",
+            "source": "OECD",
+            "source_type": "Web",
+            "description": "OECD data search landing page (may require further resource selection).",
+            "file_format": "unknown",
+            "tags": [
+              "oecd",
+              "search"
+            ]
+          },
+          "source": "OECD",
+          "source_url": "https://data.oecd.org/searchresults/?q=interest+rates+india",
+          "acquisition": true
+        }
+      ],
+      "retrieval_status": "API_HIT",
+      "acquisition_success": true,
+      "planner_output": {
+        "topics": [
+          "India GDP",
+          "India Exports",
+          "India Inflation",
+          "India Interest Rates"
+        ],
+        "intent": "forecasting",
+        "metrics": [
+          "gdp"
+        ],
+        "entities": [
+          "India"
+        ],
+        "is_multi": false,
+        "requests": [
+          {
+            "topic": "India GDP",
+            "question": "Forecast India's GDP."
+          }
+        ],
+        "research_objective": {
+          "objective_type": "forecasting",
+          "summary": "Forecast GDP for India.",
+          "primary_metric": "GDP",
+          "entities": [
+            "India"
+          ],
+          "secondary_metrics": [],
+          "time_horizon": null,
+          "notes": []
+        },
+        "mandatory_topics": [
+          "India GDP"
+        ]
+      },
+      "selected_tools": [
+        {
+          "tool_id": "forecast",
+          "name": "Forecast",
+          "category": "predictive",
+          "score": 0.46,
+          "reason": "Matched 'Forecast' (score=0.46); keywords: forecast; profile: time_series, numeric_metric",
+          "produces_chart": true,
+          "order": 1,
+          "tags": [
+            "forecast",
+            "time"
+          ],
+          "metadata": {}
+        },
+        {
+          "tool_id": "trend",
+          "name": "Trend",
+          "category": "time_series",
+          "score": 0.28,
+          "reason": "Matched 'Trend' (score=0.28); profile: time_series, numeric_metric",
+          "produces_chart": true,
+          "order": 2,
+          "tags": [
+            "time",
+            "eda"
+          ],
+          "metadata": {}
+        },
+        {
+          "tool_id": "time_series",
+          "name": "Time Series",
+          "category": "time_series",
+          "score": 0.2,
+          "reason": "Matched 'Time Series' (score=0.20); profile: time_series; co-selected as companion tool",
+          "produces_chart": true,
+          "order": 3,
+          "tags": [
+            "time"
+          ],
+          "metadata": {}
+        },
+        {
+          "tool_id": "visualization",
+          "name": "Visualization",
+          "category": "visualization",
+          "score": 0.16,
+          "reason": "Matched 'Visualization' (score=0.16); profile: numeric_metric, time; co-selected as companion tool",
+          "produces_chart": true,
+          "order": 4,
+          "tags": [
+            "chart"
+          ],
+          "metadata": {}
+        }
+      ],
+      "execution_time": 3.3728,
+      "retrieval_time": 3.3408,
+      "acquisition_time": 0.024,
+      "analysis_time": 0.0045,
+      "generated_charts": [
+        {
+          "tool_id": "forecast",
+          "planned": true
+        },
+        {
+          "tool_id": "trend",
+          "planned": true
+        },
+        {
+          "tool_id": "time_series",
+          "planned": true
+        },
+        {
+          "tool_id": "visualization",
+          "planned": true
+        }
+      ],
+      "explanation": {
+        "summary": "Evaluation stub answer for: Forecast India's GDP. Used 4 dataset(s), 4 analytical tool(s).",
+        "reasoning_summary": "The user asked: \u201cForecast India's GDP.\u201d. Analysis used 4 dataset(s): India GDP, India Exports, India Inflation, India Interest Rates. Datasets were combined using `outer` on Country, Year. Analytical steps included: Forecast, Trend, Time Series, Visualization. Result snapshot: Evaluation stub answer for: Forecast India's GDP. This explanation is derived from pipeline metadata (datasets, plan, joins, tools), not from re-running the analysis.",
+        "confidence": 1.0,
+        "explanation_text": "Evaluation stub answer for: Forecast India's GDP. Used 4 dataset(s), 4 analytical tool(s). Data: India GDP, India Exports, India Inflation, India Interest Rates. Methods: Forecast, Trend, Time Series, Visualization. Confidence: 100%.",
+        "short_text": "Evaluation stub answer for: Forecast India's GDP. Used 4 dataset(s), 4 analytical tool(s). Data: India GDP, India Exports, India Inflation, India Interest Rates. Methods: Forecast, Trend, Time Series, Visualization. Confidence: 100%."
+      },
+      "confidence": 0.95,
+      "errors": [],
+      "warnings": [],
+      "join_plan": {
+        "strategy": "outer",
+        "join_keys": [
+          "Country",
+          "Year"
+        ],
+        "datasets_merged": 4,
+        "notes": [
+          "Evaluated join plan (component mode)"
+        ]
+      },
+      "context_resolution": {},
+      "crashed": false,
+      "graceful_failure": false,
+      "context_cleared": false,
+      "forecast_ran": true,
+      "selection_ok": true,
+      "semantic_score": null,
+      "memory_mb": 0.0,
+      "scores": {
+        "retrieval": 1.0,
+        "selection": 1.0,
+        "semantic": null,
+        "planner": 1.0,
+        "context": null,
+        "join": 0.8,
+        "forecast": 1.0,
+        "chart": 1.0,
+        "explanation": 0.8,
+        "failure_recovery": null,
+        "notes": [],
+        "mean": 0.9429
+      },
+      "meta": {
+        "research_topics": [
+          "India GDP",
+          "India Exports",
+          "India Inflation",
+          "India Interest Rates"
+        ]
+      }
+    },
+    {
+      "id": 41,
+      "category": "5_multi_dataset",
+      "question": "Compare GDP, Inflation and Population.",
+      "turns": [
+        "Compare GDP, Inflation and Population."
+      ],
+      "status": "passed",
+      "retrieved_datasets": [
+        {
+          "topic": "GDP",
+          "status": "API_HIT",
+          "dataset_id": null,
+          "local_path": "C:\\Users\\abhis\\projects\\AI-Analyst-Agent\\tests\\evaluation\\data\\india_gdp.csv",
+          "download_url": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
+          "provider": "official_api:World Bank",
+          "reason": "Official API/source match via World Bank.",
+          "metadata": {
+            "title": "World Bank GDP (open CSV)",
+            "topic": "GDP",
+            "download_url": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
+            "source": "World Bank",
+            "source_type": "API",
+            "description": "Country-level annual GDP series suitable for trend analysis.",
+            "file_format": "csv",
+            "tags": [
+              "gdp",
+              "macro",
+              "world bank"
+            ]
+          },
+          "source": "World Bank",
+          "source_url": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
+          "acquisition": true
+        },
+        {
+          "topic": "inflation",
+          "status": "API_HIT",
+          "dataset_id": null,
+          "local_path": "C:\\Users\\abhis\\projects\\AI-Analyst-Agent\\tests\\evaluation\\data\\india_inflation.csv",
+          "download_url": "https://raw.githubusercontent.com/datasets/inflation/master/data/cpi.csv",
+          "provider": "official_api:World Bank",
+          "reason": "Official API/source match via World Bank.",
+          "metadata": {
+            "title": "Global CPI / Inflation",
+            "topic": "inflation",
+            "download_url": "https://raw.githubusercontent.com/datasets/inflation/master/data/cpi.csv",
+            "source": "World Bank",
+            "source_type": "API",
+            "description": "Consumer price inflation series.",
+            "file_format": "csv",
+            "tags": [
+              "inflation",
+              "cpi"
+            ]
+          },
+          "source": "World Bank",
+          "source_url": "https://raw.githubusercontent.com/datasets/inflation/master/data/cpi.csv",
+          "acquisition": true
+        },
+        {
+          "topic": "population",
+          "status": "API_HIT",
+          "dataset_id": null,
+          "local_path": "C:\\Users\\abhis\\projects\\AI-Analyst-Agent\\tests\\evaluation\\data\\india_population.csv",
+          "download_url": "https://raw.githubusercontent.com/datasets/population/master/data/population.csv",
+          "provider": "official_api:World Bank",
+          "reason": "Official API/source match via World Bank.",
+          "metadata": {
+            "title": "World Population by Country",
+            "topic": "population",
+            "download_url": "https://raw.githubusercontent.com/datasets/population/master/data/population.csv",
+            "source": "World Bank",
+            "source_type": "API",
+            "description": "Country population totals for demographic analysis.",
+            "file_format": "csv",
+            "tags": [
+              "population",
+              "demographics"
+            ]
+          },
+          "source": "World Bank",
+          "source_url": "https://raw.githubusercontent.com/datasets/population/master/data/population.csv",
+          "acquisition": true
+        }
+      ],
+      "retrieval_status": "API_HIT",
+      "acquisition_success": true,
+      "planner_output": {
+        "topics": [
+          "GDP",
+          "inflation",
+          "population"
+        ],
+        "intent": "comparison",
+        "metrics": [
+          "gdp",
+          "inflation",
+          "population"
+        ],
+        "entities": [],
+        "is_multi": true,
+        "requests": [
+          {
+            "topic": "GDP",
+            "question": "Compare GDP, Inflation and Population."
+          },
+          {
+            "topic": "inflation",
+            "question": "Compare GDP, Inflation and Population."
+          },
+          {
+            "topic": "population",
+            "question": "Compare GDP, Inflation and Population."
+          }
+        ]
+      },
+      "selected_tools": [
+        {
+          "tool_id": "comparison",
+          "name": "Comparison",
+          "category": "general",
+          "score": 0.34,
+          "reason": "Matched 'Comparison' (score=0.34); keywords: compare; profile: multi_metric, numeric_metric",
+          "produces_chart": true,
+          "order": 1,
+          "tags": [
+            "eda",
+            "compare"
+          ],
+          "metadata": {}
+        },
+        {
+          "tool_id": "forecast",
+          "name": "Forecast",
+          "category": "predictive",
+          "score": 0.28,
+          "reason": "Matched 'Forecast' (score=0.28); profile: time_series, numeric_metric",
+          "produces_chart": true,
+          "order": 2,
+          "tags": [
+            "forecast",
+            "time"
+          ],
+          "metadata": {}
+        },
+        {
+          "tool_id": "trend",
+          "name": "Trend",
+          "category": "time_series",
+          "score": 0.28,
+          "reason": "Matched 'Trend' (score=0.28); profile: time_series, numeric_metric",
+          "produces_chart": true,
+          "order": 3,
+          "tags": [
+            "time",
+            "eda"
+          ],
+          "metadata": {}
+        }
+      ],
+      "execution_time": 0.1044,
+      "retrieval_time": 0.0722,
+      "acquisition_time": 0.0265,
+      "analysis_time": 0.0027,
+      "generated_charts": [
+        {
+          "tool_id": "comparison",
+          "planned": true
+        },
+        {
+          "tool_id": "forecast",
+          "planned": true
+        },
+        {
+          "tool_id": "trend",
+          "planned": true
+        }
+      ],
+      "explanation": {
+        "summary": "Evaluation stub answer for: Compare GDP, Inflation and Population. Used 3 dataset(s), 3 analytical tool(s).",
+        "reasoning_summary": "The user asked: \u201cCompare GDP, Inflation and Population.\u201d. Analysis used 3 dataset(s): GDP, inflation, population. Datasets were combined using `outer` on Country, Year. Analytical steps included: Comparison, Forecast, Trend. Result snapshot: Evaluation stub answer for: Compare GDP, Inflation and Population. This explanation is derived from pipeline metadata (datasets, plan, joins, tools), not from re-running the analysis.",
+        "confidence": 1.0,
+        "explanation_text": "Evaluation stub answer for: Compare GDP, Inflation and Population. Used 3 dataset(s), 3 analytical tool(s). Data: GDP, inflation, population. Methods: Comparison, Forecast, Trend. Confidence: 100%.",
+        "short_text": "Evaluation stub answer for: Compare GDP, Inflation and Population. Used 3 dataset(s), 3 analytical tool(s). Data: GDP, inflation, population. Methods: Comparison, Forecast, Trend. Confidence: 100%."
+      },
+      "confidence": 0.85,
+      "errors": [],
+      "warnings": [],
+      "join_plan": {
+        "strategy": "outer",
+        "join_keys": [
+          "Country",
+          "Year"
+        ],
+        "datasets_merged": 3,
+        "notes": [
+          "Evaluated join plan (component mode)"
+        ]
+      },
+      "context_resolution": {},
+      "crashed": false,
+      "graceful_failure": false,
+      "context_cleared": false,
+      "forecast_ran": true,
+      "selection_ok": true,
+      "semantic_score": null,
+      "memory_mb": 0.0,
+      "scores": {
+        "retrieval": 1.0,
+        "selection": 1.0,
+        "semantic": null,
+        "planner": 1.0,
+        "context": null,
+        "join": 1.0,
+        "forecast": null,
+        "chart": 1.0,
+        "explanation": 0.8,
+        "failure_recovery": null,
+        "notes": [],
+        "mean": 0.9667
+      },
+      "meta": {
+        "research_topics": [
+          "GDP",
+          "Inflation",
+          "Population"
+        ]
+      }
+    },
+    {
+      "id": 51,
+      "category": "6_followup",
+      "question": "Analyze India's GDP.",
+      "turns": [
+        "Analyze India's GDP."
+      ],
+      "status": "passed",
+      "retrieved_datasets": [
+        {
+          "dataset_id": null,
+          "local_path": "C:\\Users\\abhis\\projects\\AI-Analyst-Agent\\tests\\evaluation\\data\\india_gdp.csv",
+          "download_url": null,
+          "topic": "India GDP",
+          "source": "eval_fixture",
+          "columns": [
+            "Country",
+            "Year",
+            "GDP"
+          ],
+          "row_count": null,
+          "registry_id": null,
+          "is_active": true,
+          "metadata": {}
+        }
+      ],
+      "retrieval_status": "CONTEXT",
+      "acquisition_success": null,
+      "planner_output": {
+        "topics": [
+          "India GDP"
+        ],
+        "intent": "single",
+        "is_multi": false
+      },
+      "selected_tools": [
+        {
+          "tool_id": "eda_summary",
+          "name": "EDA Summary",
+          "category": "descriptive",
+          "score": 0.18,
+          "reason": "Matched 'EDA Summary' (score=0.18); keywords: analyze; co-selected as companion tool",
+          "produces_chart": false,
+          "order": 1,
+          "tags": [
+            "eda",
+            "default"
+          ],
+          "metadata": {}
+        },
+        {
+          "tool_id": "forecast",
+          "name": "Forecast",
+          "category": "predictive",
+          "score": 0.28,
+          "reason": "Matched 'Forecast' (score=0.00); co-selected as companion tool",
+          "produces_chart": true,
+          "order": 2,
+          "tags": [
+            "forecast",
+            "time"
+          ],
+          "metadata": {}
+        },
+        {
+          "tool_id": "outlier_detection",
+          "name": "Outlier Detection",
+          "category": "anomaly",
+          "score": 0.28,
+          "reason": "Matched 'Outlier Detection' (score=0.00); co-selected as companion tool",
+          "produces_chart": true,
+          "order": 3,
+          "tags": [
+            "anomaly",
+            "eda"
+          ],
+          "metadata": {}
+        },
+        {
+          "tool_id": "trend",
+          "name": "Trend",
+          "category": "time_series",
+          "score": 0.28,
+          "reason": "Matched 'Trend' (score=0.00); co-selected as companion tool",
+          "produces_chart": true,
+          "order": 4,
+          "tags": [
+            "time",
+            "eda"
+          ],
+          "metadata": {}
+        },
+        {
+          "tool_id": "time_series",
+          "name": "Time Series",
+          "category": "time_series",
+          "score": 0.28,
+          "reason": "Matched 'Time Series' (score=0.00); co-selected as companion tool",
+          "produces_chart": true,
+          "order": 5,
+          "tags": [
+            "time"
+          ],
+          "metadata": {}
+        },
+        {
+          "tool_id": "correlation",
+          "name": "Correlation",
+          "category": "relationship",
+          "score": 0.28,
+          "reason": "Matched 'Correlation' (score=0.00); co-selected as companion tool",
+          "produces_chart": true,
+          "order": 6,
+          "tags": [
+            "stats",
+            "relationship"
+          ],
+          "metadata": {}
+        }
+      ],
+      "execution_time": 0.0408,
+      "retrieval_time": 0.0,
+      "acquisition_time": 0.0,
+      "analysis_time": 0.0,
+      "generated_charts": [],
+      "explanation": null,
+      "confidence": 0.75,
+      "errors": [],
+      "warnings": [],
+      "join_plan": {},
+      "context_resolution": {
+        "conversation_id": "eval-followup-51",
+        "original_question": "Analyze India's GDP.",
+        "resolved_question": "Analyze India's GDP.",
+        "is_follow_up": false,
+        "reuse_active_dataset": false,
+        "dataset_refs": [
+          {
+            "dataset_id": null,
+            "local_path": "C:\\Users\\abhis\\projects\\AI-Analyst-Agent\\tests\\evaluation\\data\\india_gdp.csv",
+            "download_url": null,
+            "topic": "India GDP",
+            "source": "eval_fixture",
+            "columns": [
+              "Country",
+              "Year",
+              "GDP"
+            ],
+            "row_count": null,
+            "registry_id": null,
+            "is_active": true,
+            "metadata": {}
+          }
+        ],
+        "filters": [],
+        "countries": [
+          "India"
+        ],
+        "metrics": [
+          "GDP"
+        ],
+        "last_chart": null,
+        "last_analysis": null,
+        "resolved_references": [],
+        "primary_topic": "India GDP",
+        "last_operation": "analyze",
+        "last_intent": null,
+        "warnings": [],
+        "metadata": {
+          "subject": "India GDP",
+          "had_context": true
+        }
+      },
+      "crashed": false,
+      "graceful_failure": false,
+      "context_cleared": false,
+      "forecast_ran": false,
+      "selection_ok": null,
+      "semantic_score": null,
+      "memory_mb": 0.0,
+      "scores": {
+        "retrieval": 1.0,
+        "selection": null,
+        "semantic": null,
+        "planner": 0.8,
+        "context": 1.0,
+        "join": null,
+        "forecast": null,
+        "chart": 0.5,
+        "explanation": null,
+        "failure_recovery": null,
+        "notes": [],
+        "mean": 0.825
+      },
+      "meta": {}
+    },
+    {
+      "id": 61,
+      "category": "7_discovery",
+      "question": "Find a dataset about EV sales.",
+      "turns": [
+        "Find a dataset about EV sales."
+      ],
+      "status": "passed",
+      "retrieved_datasets": [
+        {
+          "topic": "Find a about EV sales",
+          "status": "API_HIT",
+          "dataset_id": null,
+          "local_path": null,
+          "download_url": "https://data.oecd.org/searchresults/?q=about+sales+find",
+          "provider": "official_api:OECD",
+          "reason": "Official API/source match via OECD.",
+          "metadata": {
+            "title": "OECD search: Find a about EV sales",
+            "topic": "Find a about EV sales",
+            "download_url": "https://data.oecd.org/searchresults/?q=about+sales+find",
+            "source": "OECD",
+            "source_type": "Web",
+            "description": "OECD data search landing page (may require further resource selection).",
+            "file_format": "unknown",
+            "tags": [
+              "oecd",
+              "search"
+            ]
+          },
+          "source": "OECD",
+          "source_url": "https://data.oecd.org/searchresults/?q=about+sales+find"
+        }
+      ],
+      "retrieval_status": "API_HIT",
+      "acquisition_success": null,
+      "planner_output": {
+        "topics": [
+          "Find a about EV sales"
+        ],
+        "intent": "discovery"
+      },
+      "selected_tools": [],
+      "execution_time": 1.8009,
+      "retrieval_time": 1.7857,
+      "acquisition_time": 0.0,
+      "analysis_time": 0.0,
+      "generated_charts": [],
+      "explanation": null,
+      "confidence": 0.6,
+      "errors": [],
+      "warnings": [],
+      "join_plan": {},
+      "context_resolution": {},
+      "crashed": false,
+      "graceful_failure": false,
+      "context_cleared": false,
+      "forecast_ran": false,
+      "selection_ok": true,
+      "semantic_score": null,
+      "memory_mb": 0.0,
+      "scores": {
+        "retrieval": 1.0,
+        "selection": 1.0,
+        "semantic": null,
+        "planner": 0.8,
+        "context": null,
+        "join": null,
+        "forecast": null,
+        "chart": null,
+        "explanation": null,
+        "failure_recovery": null,
+        "notes": [],
+        "mean": 0.9333
+      },
+      "meta": {}
+    },
+    {
+      "id": 71,
+      "category": "8_explainability",
+      "question": "Why did you choose this dataset?",
+      "turns": [
+        "Analyze India's GDP.",
+        "Why did you choose this dataset?"
+      ],
+      "status": "passed",
+      "retrieved_datasets": [
+        {
+          "topic": "India GDP",
+          "dataset_id": "eval-gdp",
+          "source": "World Bank",
+          "source_url": "https://data.worldbank.org/indicator/NY.GDP.MKTP.CD",
+          "columns": [
+            "Country",
+            "Year",
+            "GDP"
+          ],
+          "local_path": "C:\\Users\\abhis\\projects\\AI-Analyst-Agent\\tests\\evaluation\\data\\india_gdp.csv"
+        }
+      ],
+      "retrieval_status": "SEEDED",
+      "acquisition_success": null,
+      "planner_output": {},
+      "selected_tools": [
+        {
+          "tool_id": "trend",
+          "name": "Trend",
+          "order": 1,
+          "produces_chart": true
+        },
+        {
+          "tool_id": "forecast",
+          "name": "Forecast",
+          "order": 2,
+          "produces_chart": true
+        }
+      ],
+      "execution_time": 0.0043,
+      "retrieval_time": 0.0,
+      "acquisition_time": 0.0,
+      "analysis_time": 0.0008,
+      "generated_charts": [
+        {
+          "planned": true,
+          "tool_id": "trend"
+        }
+      ],
+      "explanation": {
+        "style": "detailed",
+        "summary": "India GDP shows long-run growth with recent moderation. Used 1 dataset(s), 2 analytical tool(s).",
+        "datasets_used": [
+          {
+            "topic": "India GDP",
+            "dataset_id": "eval-gdp",
+            "source": "World Bank",
+            "source_url": "https://data.worldbank.org/indicator/NY.GDP.MKTP.CD",
+            "local_path": "C:\\Users\\abhis\\projects\\AI-Analyst-Agent\\tests\\evaluation\\data\\india_gdp.csv",
+            "provider": null,
+            "columns": [
+              "Country",
+              "Year",
+              "GDP"
+            ],
+            "row_count": null,
+            "citation_label": "[1] World Bank \u2014 India GDP",
+            "metadata": {}
+          }
+        ],
+        "sources": [
+          "World Bank",
+          "https://data.worldbank.org/indicator/NY.GDP.MKTP.CD"
+        ],
+        "columns_used": [
+          "Year",
+          "GDP"
+        ],
+        "filters_applied": [
+          {
+            "column": "Year",
+            "operator": "gt",
+            "value": 2010,
+            "label": "Year > 2010"
+          }
+        ],
+        "joins_performed": {
+          "strategy": "outer",
+          "join_keys": [
+            "Country",
+            "Year"
+          ],
+          "datasets_merged": 1,
+          "notes": [],
+          "schema_alignment": null
+        },
+        "tools_executed": [
+          {
+            "tool_id": "trend",
+            "name": "Trend",
+            "category": "",
+            "reason": "",
+            "order": 1,
+            "produces_chart": true,
+            "metadata": {}
+          },
+          {
+            "tool_id": "forecast",
+            "name": "Forecast",
+            "category": "",
+            "reason": "",
+            "order": 2,
+            "produces_chart": true,
+            "metadata": {}
+          }
+        ],
+        "reasoning_summary": "The user asked: \u201cWhy did you choose this dataset?\u201d. Analysis used 1 dataset(s): India GDP. Datasets were combined using `outer` on Country, Year. Filters applied: Year > 2010. Analytical steps included: Trend, Forecast. Result snapshot: India GDP shows long-run growth with recent moderation. This explanation is derived from pipeline metadata (datasets, plan, joins, tools), not from re-running the analysis.",
+        "confidence": 0.72,
+        "warnings": [],
+        "limitations": [
+          "Correlation or observed patterns do not by themselves imply causation.",
+          "Results depend on data quality, coverage, and any filters applied upstream."
+        ],
+        "citations": [
+          {
+            "topic": "India GDP",
+            "dataset_id": "eval-gdp",
+            "source": "World Bank",
+            "source_url": "https://data.worldbank.org/indicator/NY.GDP.MKTP.CD",
+            "local_path": "C:\\Users\\abhis\\projects\\AI-Analyst-Agent\\tests\\evaluation\\data\\india_gdp.csv",
+            "provider": null,
+            "columns": [
+              "Country",
+              "Year",
+              "GDP"
+            ],
+            "row_count": null,
+            "citation_label": "[1] World Bank \u2014 India GDP",
+            "metadata": {}
+          }
+        ],
+        "short_text": "India GDP shows long-run growth with recent moderation. Used 1 dataset(s), 2 analytical tool(s). Data: India GDP. Methods: Trend, Forecast. Confidence: 72%.",
+        "detailed_text": "## How this answer was produced\n**Question:** Why did you choose this dataset?\n**Summary:** India GDP shows long-run growth with recent moderation. Used 1 dataset(s), 2 analytical tool(s).\n\n### Reasoning\nThe user asked: \u201cWhy did you choose this dataset?\u201d. Analysis used 1 dataset(s): India GDP. Datasets were combined using `outer` on Country, Year. Filters applied: Year > 2010. Analytical steps included: Trend, Forecast. Result snapshot: India GDP shows long-run growth with recent moderation. This explanation is derived from pipeline metadata (datasets, plan, joins, tools), not from re-running the analysis.\n\n### Datasets used\n1. **[1] World Bank \u2014 India GDP** \u2014 source: World Bank\n   - URL: https://data.worldbank.org/indicator/NY.GDP.MKTP.CD\n   - Columns: Country, Year, GDP\n\n### Sources\n- World Bank\n- https://data.worldbank.org/indicator/NY.GDP.MKTP.CD\n\n### Columns used\nYear, GDP\n\n### Filters applied\n- Year > 2010\n\n### Joins performed\n- Strategy: `outer`\n- Keys: Country, Year\n- Datasets merged: 1\n\n### Analytical tools executed\n1. **Trend**\n2. **Forecast**\n\n### Confidence: 72%\n\n### Limitations\n- Correlation or observed patterns do not by themselves imply causation.\n- Results depend on data quality, coverage, and any filters applied upstream.\n\n### Citations\n[1] [1] World Bank \u2014 India GDP",
+        "technical_text": "# Technical Explanation\nquestion: Why did you choose this dataset?\nsummary: India GDP shows long-run growth with recent moderation. Used 1 dataset(s), 2 analytical tool(s).\nconfidence: 0.7200\n\n## reasoning\nThe user asked: \u201cWhy did you choose this dataset?\u201d. Analysis used 1 dataset(s): India GDP. Datasets were combined using `outer` on Country, Year. Filters applied: Year > 2010. Analytical steps included: Trend, Forecast. Result snapshot: India GDP shows long-run growth with recent moderation. This explanation is derived from pipeline metadata (datasets, plan, joins, tools), not from re-running the analysis.\n\n## datasets\n[1] topic='India GDP' id='eval-gdp' source='World Bank'\n    provider=None url='https://data.worldbank.org/indicator/NY.GDP.MKTP.CD'\n    path='C:\\\\Users\\\\abhis\\\\projects\\\\AI-Analyst-Agent\\\\tests\\\\evaluation\\\\data\\\\india_gdp.csv' rows=None\n    columns=['Country', 'Year', 'GDP']\n\n## sources\nWorld Bank, https://data.worldbank.org/indicator/NY.GDP.MKTP.CD\n\n## columns_used\nYear, GDP\n\n## filters\n- column='Year' op='gt' value=2010 label='Year > 2010'\n\n## joins\nstrategy='outer'\nkeys=['Country', 'Year']\ndatasets_merged=1\n\n## tools\n1 id='trend' name='Trend' category='' chart=True\n2 id='forecast' name='Forecast' category='' chart=True\n\n## warnings\n(none)\n\n## limitations\n- Correlation or observed patterns do not by themselves imply causation.\n- Results depend on data quality, coverage, and any filters applied upstream.\n\n## citations\n[1] [1] World Bank \u2014 India GDP | World Bank | https://data.worldbank.org/indicator/NY.GDP.MKTP.CD",
+        "explanation_text": "## How this answer was produced\n**Question:** Why did you choose this dataset?\n**Summary:** India GDP shows long-run growth with recent moderation. Used 1 dataset(s), 2 analytical tool(s).\n\n### Reasoning\nThe user asked: \u201cWhy did you choose this dataset?\u201d. Analysis used 1 dataset(s): India GDP. Datasets were combined using `outer` on Country, Year. Filters applied: Year > 2010. Analytical steps included: Trend, Forecast. Result snapshot: India GDP shows long-run growth with recent moderation. This explanation is derived from pipeline metadata (datasets, plan, joins, tools), not from re-running the analysis.\n\n### Datasets used\n1. **[1] World Bank \u2014 India GDP** \u2014 source: World Bank\n   - URL: https://data.worldbank.org/indicator/NY.GDP.MKTP.CD\n   - Columns: Country, Year, GDP\n\n### Sources\n- World Bank\n- https://data.worldbank.org/indicator/NY.GDP.MKTP.CD\n\n### Columns used\nYear, GDP\n\n### Filters applied\n- Year > 2010\n\n### Joins performed\n- Strategy: `outer`\n- Keys: Country, Year\n- Datasets merged: 1\n\n### Analytical tools executed\n1. **Trend**\n2. **Forecast**\n\n### Confidence: 72%\n\n### Limitations\n- Correlation or observed patterns do not by themselves imply causation.\n- Results depend on data quality, coverage, and any filters applied upstream.\n\n### Citations\n[1] [1] World Bank \u2014 India GDP",
+        "explainer": "rule_based",
+        "question": "Why did you choose this dataset?",
+        "metadata": {
+          "n_datasets": 1,
+          "n_tools": 2,
+          "n_filters": 1
+        }
+      },
+      "confidence": 0.72,
+      "errors": [],
+      "warnings": [],
+      "join_plan": {
+        "strategy": "outer",
+        "join_keys": [
+          "Country",
+          "Year"
+        ],
+        "datasets_merged": 1
+      },
+      "context_resolution": {},
+      "crashed": false,
+      "graceful_failure": false,
+      "context_cleared": false,
+      "forecast_ran": false,
+      "selection_ok": null,
+      "semantic_score": null,
+      "memory_mb": 0.0,
+      "scores": {
+        "retrieval": 0.8,
+        "selection": null,
+        "semantic": null,
+        "planner": 0.8,
+        "context": null,
+        "join": 0.8,
+        "forecast": null,
+        "chart": 1.0,
+        "explanation": 1.0,
+        "failure_recovery": null,
+        "notes": [],
+        "mean": 0.88
+      },
+      "meta": {}
+    },
+    {
+      "id": 81,
+      "category": "9_edge_cases",
+      "question": "Analyze GDP on Mars.",
+      "turns": [
+        "Analyze GDP on Mars."
+      ],
+      "status": "passed",
+      "retrieved_datasets": [
+        {
+          "topic": "Analyze GDP on Mars.",
+          "status": "API_HIT",
+          "dataset_id": null,
+          "local_path": null,
+          "download_url": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
+          "provider": "official_api:World Bank",
+          "reason": "Official API/source match via World Bank.",
+          "metadata": {
+            "title": "World Bank GDP (open CSV)",
+            "topic": "Analyze GDP on Mars.",
+            "download_url": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
+            "source": "World Bank",
+            "source_type": "API",
+            "description": "Country-level annual GDP series suitable for trend analysis.",
+            "file_format": "csv",
+            "tags": [
+              "gdp",
+              "macro",
+              "world bank"
+            ]
+          },
+          "source": "World Bank",
+          "source_url": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv"
+        }
+      ],
+      "retrieval_status": "API_HIT",
+      "acquisition_success": null,
+      "planner_output": {},
+      "selected_tools": [],
+      "execution_time": 0.0246,
+      "retrieval_time": 0.0216,
+      "acquisition_time": 0.0,
+      "analysis_time": 0.0,
+      "generated_charts": [],
+      "explanation": null,
+      "confidence": 0.2,
+      "errors": [],
+      "warnings": [
+        "Planetary query returned a best-effort hit; marked graceful"
+      ],
+      "join_plan": {},
+      "context_resolution": {},
+      "crashed": false,
+      "graceful_failure": true,
+      "context_cleared": false,
+      "forecast_ran": false,
+      "selection_ok": true,
+      "semantic_score": null,
+      "memory_mb": 0.0,
+      "scores": {
+        "retrieval": 0.8,
+        "selection": 1.0,
+        "semantic": null,
+        "planner": 0.4,
+        "context": null,
+        "join": null,
+        "forecast": null,
+        "chart": null,
+        "explanation": null,
+        "failure_recovery": 1.0,
+        "notes": [],
+        "mean": 0.8
+      },
+      "meta": {}
+    },
+    {
+      "id": 91,
+      "category": "10_stress",
+      "question": "Run 20 analyses simultaneously.",
+      "turns": [
+        "Run 20 analyses simultaneously."
+      ],
+      "status": "passed",
+      "retrieved_datasets": [],
+      "retrieval_status": null,
+      "acquisition_success": null,
+      "planner_output": {
+        "topics": [
+          "parallel_batch"
+        ],
+        "n": 20
+      },
+      "selected_tools": [
+        {
+          "tool_id": "batch",
+          "name": "Parallel batch"
+        }
+      ],
+      "execution_time": 0.0533,
+      "retrieval_time": 0.0,
+      "acquisition_time": 0.0,
+      "analysis_time": 0.0513,
+      "generated_charts": [],
+      "explanation": null,
+      "confidence": 0.8,
+      "errors": [],
+      "warnings": [],
+      "join_plan": {},
+      "context_resolution": {},
+      "crashed": false,
+      "graceful_failure": false,
+      "context_cleared": false,
+      "forecast_ran": false,
+      "selection_ok": null,
+      "semantic_score": null,
+      "memory_mb": 0.0,
+      "scores": {
+        "retrieval": 0.8,
+        "selection": null,
+        "semantic": null,
+        "planner": 0.8,
+        "context": null,
+        "join": null,
+        "forecast": null,
+        "chart": null,
+        "explanation": null,
+        "failure_recovery": 0.4,
+        "notes": [],
+        "mean": 0.6667
+      },
+      "meta": {
+        "parallel_results": 20
+      }
+    }
+  ]
+}

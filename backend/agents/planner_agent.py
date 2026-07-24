@@ -10,6 +10,8 @@ logger = get_logger(__name__)
 VALID_PLANNER_NODES = {
     "load_data",
     "fetch_data",
+    "retrieve_dataset",
+    "prepare_dataset",
     "profile_data",
     "recommend_analysis",
     "dataset_topic_detection",
@@ -218,15 +220,19 @@ def _infer_operation(plan: list[str]) -> str | None:
 
 
 def _discovery_prefix(state, force: bool = False) -> list[str]:
-    """Steps to discover and load data when nothing is active or topic changed."""
+    """Steps to discover and load data when nothing is active or topic changed.
+
+    New pipeline: retrieve_dataset → prepare_dataset → fetch_data
+    (Retrieval / Acquisition / Intelligence / Learning live behind prepare.)
+    """
     if state.get("data") is not None and not force:
         return []
     # User upload is only preferred when we are not switching topics.
     if state.get("file_path") and not force and not state.get("topic_mismatch"):
-        return ["load_data"]
+        return ["load_data", "fetch_data"]
     return [
-        "dataset_topic_agent",
-        "dataset_search_agent",
+        "retrieve_dataset",
+        "prepare_dataset",
         "fetch_data",
     ]
 
@@ -451,69 +457,73 @@ def planner_agent(state):
         index = plan.index("dataset_search_agent")
         plan.insert(index, "dataset_topic_agent")
 
-    # No data yet and no discovery/load steps — inject discovery.
+    # No data yet and no discovery/load steps — inject new retrieval pipeline.
     if (
         not dataset_available
         and "fetch_data" not in plan
         and "load_data" not in plan
+        and "retrieve_dataset" not in plan
         and "compare_datasets" not in plan
         and not state.get("stop")
     ):
         plan = [
-            "dataset_topic_agent",
-            "dataset_search_agent",
+            "retrieve_dataset",
+            "prepare_dataset",
             "fetch_data",
-        ] + [step for step in plan if step not in {
-            "dataset_topic_agent",
-            "dataset_search_agent",
-            "fetch_data",
-        }]
+        ] + [
+            step
+            for step in plan
+            if step
+            not in {
+                "dataset_topic_agent",
+                "dataset_search_agent",
+                "retrieve_dataset",
+                "prepare_dataset",
+                "fetch_data",
+            }
+        ]
 
     # Active dataset reuse (follow-ups like "forecast it"): skip rediscovery.
     rediscover = _needs_rediscovery(state, dataset_requested) or state.get("topic_mismatch")
+    discovery_nodes = {
+        "dataset_topic_agent",
+        "dataset_topic_detection",
+        "dataset_search_agent",
+        "retrieve_dataset",
+        "prepare_dataset",
+        "fetch_data",
+        "load_data",
+    }
     if (
         state.get("data") is not None
         and state.get("reuse_active_dataset")
         and not rediscover
     ):
+        plan = [step for step in plan if step not in discovery_nodes]
+    elif state.get("data") is not None and not dataset_requested and not rediscover:
+        # Same session, no new topic named — keep working on the active frame.
         plan = [
             step
             for step in plan
             if step
             not in {
-                "dataset_topic_agent",
-                "dataset_topic_detection",
-                "dataset_search_agent",
                 "fetch_data",
+                "dataset_search_agent",
+                "retrieve_dataset",
+                "prepare_dataset",
             }
         ]
-    elif state.get("data") is not None and not dataset_requested and not rediscover:
-        # Same session, no new topic named — keep working on the active frame.
-        plan = [step for step in plan if step not in {"fetch_data", "dataset_search_agent"}]
     elif state.get("data") is not None and rediscover:
-        # User asked about a NEW topic while another frame is loaded — full rediscovery.
-        # Must re-run topic + search; otherwise stale "india gdp" URL is reused.
+        # User asked about a NEW topic — full retrieve/prepare/load pipeline.
         state["force_reload_dataset"] = True
         state["reuse_active_dataset"] = False
-        # Drop stale URL so search cannot reload the previous dataset.
+        # Preserve previous topic for SessionProvider comparison if present.
+        if state.get("dataset_topic") and not state.get("session_dataset_topic"):
+            state["session_dataset_topic"] = state.get("dataset_topic")
         state["dataset_url"] = None
-        prefix = [
-            "dataset_topic_agent",
-            "dataset_search_agent",
-            "fetch_data",
-        ]
-        plan = prefix + [
-            step
-            for step in plan
-            if step
-            not in {
-                "dataset_topic_agent",
-                "dataset_topic_detection",
-                "dataset_search_agent",
-                "fetch_data",
-                "load_data",
-            }
-        ]
+        state["local_path"] = None
+        prefix = ["retrieve_dataset", "prepare_dataset", "fetch_data"]
+        plan = prefix + [step for step in plan if step not in discovery_nodes]
 
     if state.get("file_path") and state.get("data") is None and "load_data" not in plan:
         plan.insert(0, "load_data")

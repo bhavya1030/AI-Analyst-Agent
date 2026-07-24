@@ -110,14 +110,10 @@ def dataset_topic_agent(state):
     topic = _extract_topic_from_question(question)
     rule_topic = topic
 
-    # Ollama understands free-form / novel subjects (ChatGPT-like), then we
-    # search/learn datasets — the model is not weight-trained on each ask.
+    # Ollama for free-form subjects only when rules are weak/empty.
+    # Do NOT block rediscovery of clear topics like "gold" waiting on LLM.
     use_llm = bool(getattr(settings, "USE_LLM_TOPIC", False))
-    needs_llm = use_llm and (
-        not topic
-        or _topic_is_weak(topic)
-        or state.get("topic_mismatch")
-    )
+    needs_llm = use_llm and (not topic or _topic_is_weak(topic))
 
     if question and needs_llm:
         prompt = f"""

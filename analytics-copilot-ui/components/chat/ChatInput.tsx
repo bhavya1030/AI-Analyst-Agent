@@ -39,7 +39,21 @@ export default function ChatInput() {
       addMessage(userMessage);
 
       try {
-        const payload = await askQuestion(text.trim(), sessionId, filePath || undefined);
+        // Prefer open-data discovery for named public topics so a sticky upload
+        // (or old file_path) does not force the wrong dataset (e.g. GDP vs gold).
+        const lower = text.trim().toLowerCase();
+        const shouldPreferDiscovery =
+          /analyze|analyse|study|explore|forecast|predict|dataset about|data on/.test(lower) &&
+          !/(upload|this file|my file|\.csv|\.xlsx)/.test(lower) &&
+          /(gold|silver|oil|bitcoin|gdp|population|inflation|covid|climate|stock|unemployment)/.test(
+            lower
+          );
+
+        const payload = await askQuestion(
+          text.trim(),
+          sessionId,
+          shouldPreferDiscovery ? undefined : filePath || undefined
+        );
         const assistantMessage: ChatMessage = {
           id: `assistant-${Date.now()}`,
           role: "assistant",

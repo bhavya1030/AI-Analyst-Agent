@@ -1,0 +1,11 @@
+id,category,status,question,execution_time,retrieval_time,acquisition_time,analysis_time,confidence,retrieval_status,acquisition_success,mean_score,n_datasets,n_tools,n_charts,has_explanation,errors,warnings
+1,1_single_dataset,passed,Analyze India's GDP from 2000–2024.,2.9056,0.0,0.0,0.0211,0.85,FIXTURE,True,0.8583,1,2,2,True,,
+11,2_comparison,passed,Compare India and China GDP.,0.0065,0.0,0.0,0.0029,0.95,FIXTURE,True,0.9071,2,3,3,True,,
+21,3_correlation,passed,Relationship between rainfall and crop yield.,0.0076,0.0,0.0,0.0039,0.85,FIXTURE,True,0.9071,2,6,6,True,,
+31,4_forecasting,passed,Forecast India's GDP.,0.0064,0.0,0.0,0.0028,0.95,FIXTURE,True,0.8938,4,4,4,True,,
+41,5_multi_dataset,passed,"Compare GDP, Inflation and Population.",0.0058,0.0,0.0,0.0024,0.85,FIXTURE,True,0.9071,3,3,3,True,,
+51,6_followup,passed,Analyze India's GDP.,0.0379,0.0,0.0,0.0,0.75,CONTEXT,,0.825,1,6,0,False,,
+61,7_discovery,passed,Find a dataset about EV sales.,0.0028,0.0,0.0,0.0,0.6,FIXTURE,,0.8625,1,0,0,False,,
+71,8_explainability,passed,Why did you choose this dataset?,0.0048,0.0,0.0,0.0008,0.72,SEEDED,,0.88,1,2,1,True,,
+81,9_edge_cases,passed,Analyze GDP on Mars.,0.0048,0.0,0.0,0.0,0.2,NOT_FOUND,,0.6,1,0,0,False,No terrestrial dataset for planetary query (expected),
+91,10_stress,passed,Run 20 analyses simultaneously.,0.0627,0.0,0.0,0.0588,0.8,,,0.6667,0,1,0,False,,

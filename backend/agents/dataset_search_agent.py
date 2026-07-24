@@ -117,8 +117,14 @@ def dataset_search_agent(state: dict[str, Any]) -> dict[str, Any]:
 
     # User already connected a loadable source (upload path sets file elsewhere;
     # direct URL may already be on state from topic agent).
+    # NEVER keep a stale session URL when rediscovering a new topic (e.g. gold vs GDP).
     existing = state.get("dataset_url")
-    if existing and is_loadable_url(existing):
+    if (
+        existing
+        and is_loadable_url(existing)
+        and not state.get("force_reload_dataset")
+        and not state.get("topic_mismatch")
+    ):
         state["dataset_discovery"] = {
             "status": "provided",
             "source": state.get("source") or "direct_url",
@@ -130,6 +136,9 @@ def dataset_search_agent(state: dict[str, Any]) -> dict[str, Any]:
         state.pop("needs_user_data", None)
         state["stop"] = False
         return state
+
+    if state.get("force_reload_dataset") or state.get("topic_mismatch"):
+        state["dataset_url"] = None
 
     if not topic:
         return _apply_not_found(state, topic="")

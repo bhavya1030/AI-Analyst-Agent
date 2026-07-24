@@ -194,14 +194,63 @@ def _normalize_dataset_reference(file_path: str | None) -> str | None:
     return str(Path(file_path).expanduser().resolve(strict=False))
 
 
+def _question_is_new_topic(question: str | None, active_topic: str | None) -> bool:
+    """True when the user named a different subject than the session dataset."""
+    import re
+
+    stop = {
+        "the", "a", "an", "and", "or", "of", "for", "to", "in", "on", "with", "by",
+        "from", "analyze", "analyse", "analysis", "study", "explore", "forecast",
+        "predict", "next", "previous", "past", "last", "years", "year", "rate",
+        "rates", "price", "prices", "data", "dataset", "show", "plot", "trend",
+        "trends", "please", "help",
+    }
+    q_tokens = {
+        t for t in re.findall(r"[a-z0-9]+", (question or "").lower())
+        if len(t) > 2 and t not in stop
+    }
+    t_tokens = {
+        t for t in re.findall(r"[a-z0-9]+", (active_topic or "").lower())
+        if len(t) > 2 and t not in stop
+    }
+    if not q_tokens:
+        return False
+    if not t_tokens:
+        return bool(q_tokens)
+    return len(q_tokens & t_tokens) == 0
+
+
 def _build_state(session, question=None, file_path=None):
     # Session memory: reload the active dataset so follow-ups like
     # "forecast it" work without re-uploading or re-searching.
-    dataset = None if file_path else _load_session_dataset(session)
-
     dataset_url = getattr(session, "dataset_url", None) if session is not None else None
     dataset_path = getattr(session, "dataset_path", None) if session is not None else None
     dataset_topic = getattr(session, "dataset_topic", None) if session is not None else None
+
+    # Hard stop: "analyze gold..." must NOT keep India GDP from session memory.
+    # Detect before loading so we never waste time reloading the wrong frame.
+    topic_mismatch = False
+    if (
+        question
+        and not file_path
+        and session is not None
+        and (dataset_topic or dataset_url or dataset_path)
+        and _question_is_new_topic(question, dataset_topic)
+    ):
+        topic_mismatch = True
+        dataset = None
+        dataset_url = None
+        logger.info(
+            "Session dataset cleared for new topic",
+            extra={
+                "action": "build_state",
+                "previous_topic": dataset_topic,
+                "question": question,
+            },
+        )
+        dataset_topic = None
+    else:
+        dataset = None if file_path else _load_session_dataset(session)
 
     return {
         "data": dataset,
@@ -236,6 +285,8 @@ def _build_state(session, question=None, file_path=None):
         "file_path": dataset_path if not file_path else None,
         "has_active_dataset": dataset is not None,
         "reuse_active_dataset": False,
+        "topic_mismatch": topic_mismatch,
+        "force_reload_dataset": topic_mismatch,
         "chart_columns_used": [],
         "rows": int(dataset.shape[0]) if dataset is not None else 0,
         "columns": dataset.columns.tolist() if dataset is not None else [],
@@ -246,6 +297,19 @@ def _build_state(session, question=None, file_path=None):
         "search_queries": [],
         "source": None,
         "dataset_source": None,
+        "focus_country": None,
+        "local_path": None,
+        "dataset_id": None,
+        "registry_id": None,
+        "dataset_metadata": {},
+        "retrieval_result": {},
+        "acquisition_result": {},
+        "dataset_intelligence": {},
+        "learning_result": {},
+        # Previous session topic for SessionProvider (even when mismatch clears active topic)
+        "session_dataset_topic": getattr(session, "dataset_topic", None)
+        if session is not None
+        else None,
     }
 
 
