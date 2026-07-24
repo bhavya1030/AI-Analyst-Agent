@@ -214,6 +214,14 @@ def _fallback_intent_classification(question: str) -> list[str]:
         "ev sales",
         "co2",
         "emission",
+        "housing",
+        "literacy",
+        "cryptocurrency",
+        "bitcoin",
+        "oil",
+        "agriculture",
+        "traffic",
+        "crime",
     ]
 
     if any(k in normalized for k in dataset_keywords):
@@ -240,7 +248,32 @@ def _fallback_intent_classification(question: str) -> list[str]:
     if any(k in normalized for k in dataset_topic_keywords):
         intents.append("dataset_autoload")
 
+    # Open-world: any "analyze/study/explore X" style ask should trigger discovery
+    # even when X is not in the known metric list.
+    open_world_triggers = (
+        "analyze ",
+        "analyse ",
+        "study ",
+        "explore ",
+        "investigate ",
+        "dataset about",
+        "data on ",
+        "data about ",
+        "find data",
+        "open data",
+    )
+    if any(trigger in normalized for trigger in open_world_triggers):
+        if "dataset_autoload" not in intents:
+            intents.append("dataset_autoload")
+        if "eda" not in intents:
+            intents.append("eda")
+
+    # Direct URL means user connected a source.
+    if "http://" in normalized or "https://" in normalized:
+        intents.append("dataset_autoload")
+
     if not intents:
+        # Default to exploratory analysis — planner decides discovery vs reuse.
         intents.append("eda")
 
     return list(dict.fromkeys(intents))

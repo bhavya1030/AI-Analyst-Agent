@@ -36,11 +36,19 @@ def insight_agent(state):
             parts = [llm_answer]
 
     if not parts:
-        parts.append("Analysis complete. Ask a follow-up such as 'forecast it' or 'visualize trends'.")
+        if state.get("needs_user_data"):
+            parts.append(
+                "Ask about any topic for open-data search, upload a file, "
+                "or paste a direct tabular URL — then I can analyze, chart, and forecast."
+            )
+        else:
+            parts.append(
+                "Analysis complete. Ask a follow-up such as 'forecast it' or 'visualize trends'."
+            )
 
     # Always surface recommended next steps for conversational continuity.
     recommendations = state.get("recommended_next_steps") or []
-    if not recommendations:
+    if not recommendations and state.get("data") is not None:
         # Lazy recommendation if earlier agent was skipped.
         try:
             from backend.agents.recommendation_agent import recommendation_agent
@@ -50,10 +58,28 @@ def insight_agent(state):
         except Exception:
             recommendations = []
 
+    if not recommendations and state.get("needs_user_data"):
+        recommendations = [
+            "Upload a CSV/Excel file",
+            "Paste a direct .csv / .json URL",
+            "Try a public topic like 'Analyze world GDP'",
+        ]
+        state["recommended_next_steps"] = recommendations
+
     if recommendations:
         rec_text = "Suggested next steps: " + "; ".join(recommendations[:4])
         if rec_text.lower() not in " ".join(parts).lower():
             parts.append(rec_text)
+
+    # Mention how data was acquired when analysis succeeded.
+    if state.get("data") is not None:
+        source = state.get("source") or state.get("dataset_source") or ""
+        discovery = state.get("dataset_discovery") or {}
+        if discovery.get("status") == "found" or source:
+            origin = discovery.get("source") or source or "open data"
+            note = f"Data source used: {origin}."
+            if note.lower() not in " ".join(parts).lower():
+                parts.append(note)
 
     # Mention active dataset so the user knows memory is working.
     topic = state.get("dataset_topic")

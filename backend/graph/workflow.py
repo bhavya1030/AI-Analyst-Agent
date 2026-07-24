@@ -228,7 +228,9 @@ def build_graph():
         "hypothesis_generation",
         "compare_datasets",
     ]:
-        builder.add_conditional_edges(node_name, router, VALID_ROUTE_MAP)
+        # Include terminal insight so stop / empty-plan routes never fail.
+        edge_map = {**VALID_ROUTE_MAP, "generate_insight": "generate_insight"}
+        builder.add_conditional_edges(node_name, router, edge_map)
 
     # -------------------------
     # TERMINAL EDGES

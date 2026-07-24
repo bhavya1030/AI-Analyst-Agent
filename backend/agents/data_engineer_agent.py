@@ -5,7 +5,9 @@ import pandas as pd
 from backend.agents.dataset_search_agent import dataset_search_agent
 from backend.core.logger import get_logger
 from backend.errors.error_types import DATASET_NOT_FOUND, DATASET_LOAD_FAILED
+from backend.utils.data_acquisition import CONNECT_SOURCES_HINT, DEFAULT_ACQUISITION_OPTIONS
 from backend.utils.dataset_loader import load_dataset
+from backend.utils.dataset_resolver import looks_like_direct_url
 
 logger = get_logger(__name__)
 
@@ -14,13 +16,14 @@ def data_engineer_agent(state):
     """Download and prepare a dataset for downstream analytics agents.
 
     Responsibilities:
-    - resolve dataset URL (via search if needed)
+    - resolve dataset URL (via search if needed) or user file/URL
     - load CSV/Excel/JSON/Parquet
     - standardize columns
     - coerce types
     - optional country/entity filter from user focus
     - light cleaning (non-destructive)
     - expose a ready-to-analyze DataFrame on state
+    - when discovery fails: guide upload / direct URL / connect source
     """
     logger.info(
         "Data engineer agent executing",
@@ -33,23 +36,65 @@ def data_engineer_agent(state):
         prepared = _prepare_dataframe(state["data"], state)
         return _finalize_frame(state, prepared, dataset_url=state.get("dataset_url"))
 
+    # User-connected local file wins over remote discovery.
+    if state.get("file_path") and not state.get("force_reload_dataset"):
+        try:
+            df = load_dataset(state["file_path"])
+            df = _prepare_dataframe(df, state)
+            state["source"] = state.get("source") or "user_upload"
+            return _finalize_frame(state, df, dataset_url=None)
+        except Exception as e:
+            state["error"] = f"Dataset loading failed: {str(e)}"
+            state["error_type"] = DATASET_LOAD_FAILED
+            state["data"] = None
+            state["answer"] = (
+                f"Could not load your file ({state.get('file_path')}). {CONNECT_SOURCES_HINT}"
+            )
+            state["needs_user_data"] = True
+            state["data_acquisition_options"] = list(DEFAULT_ACQUISITION_OPTIONS)
+            state["stop"] = True
+            return state
+
     dataset_url = state.get("dataset_url") if not state.get("force_reload_dataset") else None
     if state.get("force_reload_dataset"):
-        # Allow search to pick a fresh URL for the new topic.
+        # Allow search to pick a fresh URL for the new topic — never keep stale GDP/etc.
         dataset_url = None
+        state["dataset_url"] = None
+        # Clear previous frame so a failed gold search cannot fall back to India GDP.
+        state["data"] = None
+        state["last_dataset"] = None
+
+    # Direct URL embedded in the question (user connected a source).
+    if not dataset_url:
+        from_question = _url_from_question(state.get("question") or "")
+        if from_question:
+            dataset_url = from_question
+            state["dataset_url"] = from_question
+            state["source"] = "direct_url"
 
     if not dataset_url:
         state = dataset_search_agent(state)
         dataset_url = state.get("dataset_url")
 
     if not dataset_url:
-        if state.get("file_path"):
+        # Do not keep the previous session frame when rediscovery failed.
+        state["data"] = None
+        state["last_dataset"] = None
+        if state.get("file_path") and not state.get("force_reload_dataset"):
             return state
 
-        state["error"] = "I could not locate a suitable dataset for this topic."
+        topic = state.get("dataset_topic") or "this topic"
+        message = state.get("answer") or (
+            f'I could not locate a suitable open dataset for "{topic}". {CONNECT_SOURCES_HINT}'
+        )
+        state["error"] = message
         state["error_type"] = DATASET_NOT_FOUND
-        if not state.get("answer"):
-            state["answer"] = state["error"]
+        state["answer"] = message
+        state["needs_user_data"] = True
+        state["data_acquisition_options"] = state.get("data_acquisition_options") or list(
+            DEFAULT_ACQUISITION_OPTIONS
+        )
+        state["stop"] = True
         return state
 
     logger.info(
@@ -60,17 +105,35 @@ def data_engineer_agent(state):
     try:
         df = load_dataset(dataset_url)
         df = _prepare_dataframe(df, state)
+        if looks_like_direct_url(dataset_url):
+            state["source"] = state.get("source") or "open_data"
         return _finalize_frame(state, df, dataset_url=dataset_url)
     except Exception as e:
-        state["error"] = f"Dataset loading failed: {str(e)}"
+        topic = state.get("dataset_topic") or "this topic"
+        message = (
+            f'Found a candidate for "{topic}" but loading failed: {str(e)}. '
+            f"{CONNECT_SOURCES_HINT}"
+        )
+        state["error"] = message
         state["error_type"] = DATASET_LOAD_FAILED
         state["data"] = None
-        state["answer"] = state["error"]
+        state["answer"] = message
+        state["needs_user_data"] = True
+        state["data_acquisition_options"] = list(DEFAULT_ACQUISITION_OPTIONS)
+        state["stop"] = True
         logger.error(
             "Dataset loading failed",
             extra={"action": "fetch_data", "dataset": dataset_url, "error": str(e)},
         )
         return state
+
+
+def _url_from_question(question: str) -> str | None:
+    match = re.search(r"https?://[^\s<>\"']+", question or "")
+    if not match:
+        return None
+    url = match.group(0).rstrip(").,;]")
+    return url if looks_like_direct_url(url) else None
 
 
 def _finalize_frame(state, df: pd.DataFrame, dataset_url: str | None = None):
@@ -94,6 +157,35 @@ def _finalize_frame(state, df: pd.DataFrame, dataset_url: str | None = None):
             "columns": int(df.shape[1]),
         },
     )
+
+    # ChatGPT-style product memory: remember successful loads for future topics.
+    try:
+        from backend.memory.learned_datasets import learn_dataset
+
+        learn_url = state.get("dataset_url") or dataset_url
+        topic = state.get("dataset_topic") or ""
+        if learn_url and topic:
+            learned = learn_dataset(
+                topic=topic,
+                url=str(learn_url),
+                source=str(state.get("source") or state.get("dataset_source") or ""),
+                title=str(
+                    (state.get("dataset_discovery") or {}).get("title")
+                    or topic
+                ),
+                columns=list(df.columns)[:40],
+                notes=f"question={(state.get('question') or '')[:160]}",
+                expand_with_llm=True,
+            )
+            if learned:
+                state["dataset_learned"] = True
+                state["learned_aliases"] = learned.get("aliases") or []
+    except Exception as exc:
+        logger.warning(
+            "Dataset learning skipped",
+            extra={"error": str(exc)},
+        )
+
     return state
 
 

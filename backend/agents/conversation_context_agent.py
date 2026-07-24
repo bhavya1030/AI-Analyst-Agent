@@ -134,6 +134,58 @@ def conversation_context_agent(state):
     # When a follow-up arrives and a dataset is already loaded, avoid rediscovery
     # unless the user explicitly asks for a new topic/dataset.
     if state.get("data") is not None and state.get("resolved_from_context"):
-        state["reuse_active_dataset"] = True
+        if _question_matches_active_topic(state.get("question") or "", state.get("dataset_topic") or ""):
+            state["reuse_active_dataset"] = True
+        else:
+            # e.g. active topic is India GDP but user now asks about gold.
+            state["reuse_active_dataset"] = False
+            state["topic_mismatch"] = True
+
+    # Explicit new subject while another dataset is active (not a pronoun follow-up).
+    if (
+        state.get("data") is not None
+        and not state.get("reuse_active_dataset")
+        and not state.get("resolved_from_context")
+        and _is_new_topic_request(state.get("question") or "", state.get("dataset_topic") or "")
+    ):
+        state["topic_mismatch"] = True
+        state["reuse_active_dataset"] = False
 
     return state
+
+
+def _normalize_tokens(text: str) -> set[str]:
+    import re
+
+    stop = {
+        "the", "a", "an", "and", "or", "of", "for", "to", "in", "on", "with", "by",
+        "analyze", "analyse", "analysis", "study", "explore", "forecast", "predict",
+        "next", "previous", "past", "last", "years", "year", "rate", "rates",
+        "price", "prices", "data", "dataset", "show", "plot", "trend", "trends",
+    }
+    tokens = re.findall(r"[a-z0-9]+", (text or "").lower())
+    return {t for t in tokens if len(t) > 2 and t not in stop}
+
+
+def _question_matches_active_topic(question: str, active_topic: str) -> bool:
+    """True when the question still refers to the already-loaded dataset."""
+    q_tokens = _normalize_tokens(question)
+    t_tokens = _normalize_tokens(active_topic)
+    if not q_tokens or not t_tokens:
+        return True  # pronoun follow-ups often have no topic tokens left
+    overlap = q_tokens & t_tokens
+    # Enough shared substance, or question only has generic analysis words.
+    if overlap:
+        return True
+    return False
+
+
+def _is_new_topic_request(question: str, active_topic: str) -> bool:
+    """True when the user named a concrete subject different from the active set."""
+    q_tokens = _normalize_tokens(question)
+    t_tokens = _normalize_tokens(active_topic)
+    if not q_tokens:
+        return False
+    if not t_tokens:
+        return True
+    return len(q_tokens & t_tokens) == 0

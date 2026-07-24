@@ -4,6 +4,7 @@ import re
 from backend.config import settings
 from backend.core.logger import get_logger
 from backend.llm.ollama_client import invoke_llm
+from backend.utils.dataset_resolver import looks_like_direct_url
 
 logger = get_logger(__name__)
 
@@ -32,6 +33,14 @@ METRIC_TOKENS = [
     "energy",
     "electric vehicle",
     "ev",
+    "housing",
+    "titanic",
+    "iris",
+    "gold",
+    "gold price",
+    "gold rate",
+    "silver",
+    "oil",
 ]
 
 COUNTRY_HINTS = [
@@ -50,14 +59,113 @@ COUNTRY_HINTS = [
     "australia",
 ]
 
+# Verbs/noise stripped so free-form topics become searchable phrases.
+_STRIP_PATTERN = re.compile(
+    r"\b("
+    r"analyze|analyse|analysis|study|explore|investigate|show|plot|chart|graph|"
+    r"forecast|predict|compare|visualize|visualise|display|summarize|summarise|"
+    r"summary|find|fetch|download|get|search|dataset|data|about|on|of|the|a|an|"
+    r"for|next|previous|past|last|coming|upcoming|please|help|me|with|using|"
+    r"over|across|deeply|trend|trends|rate|rates|price|prices|history|historical|"
+    r"and|to|from|years?|months?|days?"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# Keep commodity/subject words that the strip list might otherwise remove when
+# they are the actual topic (e.g. "gold rate" → keep "gold").
+_TOPIC_KEEP_TOKENS = {
+    "gold",
+    "silver",
+    "oil",
+    "bitcoin",
+    "crypto",
+    "stock",
+    "gdp",
+    "inflation",
+    "population",
+    "covid",
+    "climate",
+    "temperature",
+}
+
 
 def dataset_topic_agent(state):
     question = (state.get("question") or "").strip()
 
+    # Direct URL in the question → treat as user-connected source.
+    url_match = _extract_url(question)
+    if url_match:
+        state["dataset_url"] = url_match
+        state["dataset_topic"] = state.get("dataset_topic") or "user provided url"
+        state["source"] = "direct_url"
+        state["search_queries"] = []
+        logger.info(
+            "Dataset topic resolved from direct URL",
+            extra={"action": "dataset_topic_agent", "url": url_match},
+        )
+        return state
+
     # Fast deterministic path — critical for product UX latency.
     topic = _extract_topic_from_question(question)
+    rule_topic = topic
+
+    # Ollama understands free-form / novel subjects (ChatGPT-like), then we
+    # search/learn datasets — the model is not weight-trained on each ask.
+    use_llm = bool(getattr(settings, "USE_LLM_TOPIC", False))
+    needs_llm = use_llm and (
+        not topic
+        or _topic_is_weak(topic)
+        or state.get("topic_mismatch")
+    )
+
+    if question and needs_llm:
+        prompt = f"""
+You are a dataset topic extractor for an analytics copilot.
+Extract the real-world data subject the user wants (not analysis verbs).
+
+Examples:
+"Analyze GDP growth" -> {{"dataset_topic": "GDP", "search_queries": ["GDP", "GDP by country csv"]}}
+"Analyze India's GDP" -> {{"dataset_topic": "India GDP", "search_queries": ["India GDP", "GDP India annual"]}}
+"gold rate previous 5 years predict next 5" -> {{"dataset_topic": "gold price", "search_queries": ["gold price annual", "gold rate historical csv"]}}
+"Study electric vehicle adoption" -> {{"dataset_topic": "electric vehicle adoption", "search_queries": ["EV adoption", "electric vehicle sales"]}}
+
+Return ONLY JSON:
+{{
+  "dataset_topic": "...",
+  "search_queries": ["...", "..."]
+}}
+
+User question:
+{question}
+
+Rule-based guess (may be incomplete): {rule_topic or "none"}
+"""
+        try:
+            response = invoke_llm(prompt)
+            parsed = _parse_topic_response(response)
+            llm_topic = parsed.get("topic") or ""
+            queries = parsed.get("search_queries") or []
+            if llm_topic:
+                topic = llm_topic
+                state["dataset_topic"] = topic
+                state["search_queries"] = queries or _build_search_queries(topic, question)
+                state["topic_via_llm"] = True
+                _extract_focus_entities(state, question)
+                logger.info(
+                    "Dataset topic resolved with Ollama",
+                    extra={"action": "dataset_topic_agent", "dataset_topic": topic},
+                )
+                return state
+        except Exception as exc:
+            logger.warning(
+                "Topic LLM extraction failed",
+                extra={"error": str(exc)},
+            )
+
     if topic:
         state["dataset_topic"] = topic
+        state["search_queries"] = _build_search_queries(topic, question)
         _extract_focus_entities(state, question)
         logger.info(
             "Dataset topic resolved without LLM",
@@ -65,40 +173,31 @@ def dataset_topic_agent(state):
         )
         return state
 
-    if question and bool(getattr(settings, "USE_LLM_TOPIC", False)):
-        prompt = f"""
-Extract the dataset topic for data discovery.
-Examples:
-"Analyze GDP growth" -> GDP
-"Analyze India's GDP" -> India GDP
-"Study electric vehicle adoption" -> electric vehicle adoption
-"Forecast cryptocurrency trends" -> cryptocurrency
-"Compare GDP and Population" -> GDP population
-
-Return ONLY:
-{{
-  "dataset_topic": "..."
-}}
-
-Input:
-{question}
-"""
-        try:
-            response = invoke_llm(prompt)
-            topic = _parse_topic_response(response)
-        except Exception as exc:
-            logger.warning(
-                "Topic LLM extraction failed",
-                extra={"error": str(exc)},
-            )
-            topic = ""
-
-        if topic:
-            state["dataset_topic"] = topic
-            _extract_focus_entities(state, question)
-            return state
-
     return _fallback_topic(state, question)
+
+
+def _topic_is_weak(topic: str) -> bool:
+    tokens = [t for t in (topic or "").lower().split() if t]
+    if not tokens:
+        return True
+    if len(tokens) == 1 and tokens[0] in {"data", "dataset", "analysis", "trend"}:
+        return True
+    # Only digits/noise
+    if all(t.isdigit() for t in tokens):
+        return True
+    return False
+
+
+def _extract_url(text: str) -> str | None:
+    if not text:
+        return None
+    match = re.search(r"https?://[^\s<>\"']+", text)
+    if not match:
+        return None
+    url = match.group(0).rstrip(").,;]")
+    if looks_like_direct_url(url):
+        return url
+    return None
 
 
 def _extract_topic_from_question(question: str) -> str:
@@ -106,23 +205,33 @@ def _extract_topic_from_question(question: str) -> str:
         return ""
 
     normalized = question.lower()
-    # Strip common instruction verbs for cleaner topics.
-    cleaned = re.sub(
-        r"\b(analyze|analyse|analysis|study|explore|investigate|show|plot|"
-        r"forecast|predict|compare|visualize|visualise|display|summarize|"
-        r"summary|of|the|a|an|for|next|\d+\s*years?)\b",
-        " ",
-        normalized,
-    )
-    cleaned = re.sub(r"[^a-z0-9\s]", " ", cleaned)
+    # Preserve known subject tokens before stripping filler (gold rate → gold).
+    kept = [tok for tok in _TOPIC_KEEP_TOKENS if re.search(rf"(?<![a-z0-9]){re.escape(tok)}(?![a-z0-9])", normalized)]
+    cleaned = _STRIP_PATTERN.sub(" ", normalized)
+    # Drop horizon numbers left over from "previous 5 years" / "next 10 years".
+    cleaned = re.sub(r"\b\d+\b", " ", cleaned)
+    cleaned = re.sub(r"[^a-z0-9\s\-]", " ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if kept:
+        # Prefer explicit commodity/subject + residual cleaned phrase.
+        residual = [w for w in cleaned.split() if w not in kept]
+        cleaned = " ".join(kept + residual).strip()
 
-    metrics = [token for token in METRIC_TOKENS if token in normalized]
+    metrics = [
+        token
+        for token in sorted(METRIC_TOKENS, key=len, reverse=True)
+        if re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", normalized)
+    ]
+    # Prefer longest phrase only (e.g. "gold rate" over bare "gold").
+    if metrics:
+        primary = metrics[0]
+        metrics = [primary] + [
+            m for m in metrics[1:] if m not in primary and primary not in m
+        ]
     countries = []
     for country in sorted(COUNTRY_HINTS, key=len, reverse=True):
         pattern = rf"(?<![a-z0-9]){re.escape(country)}(?![a-z0-9])"
         if re.search(pattern, normalized):
-            # Normalize short aliases.
             if country in {"usa", "us"}:
                 label = "united states"
             elif country == "uk":
@@ -132,21 +241,59 @@ def _extract_topic_from_question(question: str) -> str:
             if label not in countries:
                 countries.append(label)
 
-    parts = []
-    if countries:
-        parts.extend(countries)
-    if metrics:
+    free_form = cleaned if cleaned not in {"", "data", "dataset", "it", "this", "that"} else ""
+    free_tokens = [t for t in free_form.split() if t]
+
+    # Words explained by country/metric shortcuts (plus trivial glue).
+    covered = set()
+    for country in countries:
+        covered.update(country.split())
+    for metric in metrics:
+        covered.update(metric.split())
+    covered.update({"united", "states", "kingdom"})
+    residual = [t for t in free_tokens if t not in covered]
+
+    # Classic short asks ("india gdp") → structured topic.
+    # Rich asks ("video game sales", "penguin body measurements") → keep full phrase
+    # so we don't map "sales" alone onto tips.csv.
+    if metrics and len(residual) == 0 and len(free_tokens) <= 4:
+        parts = []
+        if countries:
+            parts.extend(countries)
         parts.extend(metrics)
-    elif cleaned and cleaned not in {"", "data", "dataset"}:
-        # Keep a short cleaned phrase when no explicit metric found.
-        parts.append(cleaned)
+        topic = " ".join(parts).strip()
+    elif free_form:
+        topic = free_form
+    elif metrics:
+        topic = " ".join(metrics)
+    elif countries:
+        topic = " ".join(countries)
+    else:
+        topic = ""
 
-    topic = " ".join(parts).strip()
-    if not topic:
-        return ""
-
-    # Title-ish for readability while search still lowercases.
+    # Cap length so search APIs stay focused.
+    if len(topic) > 120:
+        topic = " ".join(topic.split()[:12])
     return topic
+
+
+def _build_search_queries(topic: str, question: str = "") -> list[str]:
+    base = (topic or "").strip()
+    if not base:
+        return []
+    queries = [
+        base,
+        f"{base} dataset",
+        f"{base} csv",
+        f"{base} open data",
+    ]
+    # Keep a lightly cleaned original question fragment for broader recall.
+    if question:
+        fragment = _STRIP_PATTERN.sub(" ", question.lower())
+        fragment = re.sub(r"\s+", " ", fragment).strip()
+        if fragment and fragment not in queries:
+            queries.append(fragment)
+    return list(dict.fromkeys(q for q in queries if q))[:6]
 
 
 def _extract_focus_entities(state, question: str):
@@ -171,9 +318,9 @@ def _extract_focus_entities(state, question: str):
             break
 
 
-def _parse_topic_response(response: str) -> str:
+def _parse_topic_response(response: str) -> dict:
     if not response:
-        return ""
+        return {}
 
     try:
         payload = json.loads(response)
@@ -183,18 +330,21 @@ def _parse_topic_response(response: str) -> str:
             try:
                 payload = json.loads(payload)
             except Exception:
-                return ""
+                return {}
         else:
-            return ""
+            return {}
 
     if not isinstance(payload, dict):
-        return ""
+        return {}
 
     topic = payload.get("dataset_topic") or payload.get("topic")
-    if isinstance(topic, str):
-        return topic.strip()
-
-    return ""
+    queries = payload.get("search_queries") or []
+    result = {}
+    if isinstance(topic, str) and topic.strip():
+        result["topic"] = topic.strip()
+    if isinstance(queries, list):
+        result["search_queries"] = [str(q).strip() for q in queries if str(q).strip()]
+    return result
 
 
 def _extract_json(text: str) -> str | None:
@@ -202,18 +352,25 @@ def _extract_json(text: str) -> str | None:
     end = text.rfind("}")
     if start == -1 or end == -1 or end <= start:
         return None
-    return text[start:end + 1]
+    return text[start : end + 1]
 
 
 def _fallback_topic(state, question: str = ""):
     topic = _extract_topic_from_question(question or state.get("question") or "")
     if topic:
         state["dataset_topic"] = topic
+        state["search_queries"] = _build_search_queries(topic, question)
         _extract_focus_entities(state, question or state.get("question") or "")
         return state
 
     columns = state.get("columns") or []
     if not columns:
+        # Still allow open-world search using the raw question text.
+        raw = (question or state.get("question") or "").strip()
+        if raw:
+            state["dataset_topic"] = raw[:120]
+            state["search_queries"] = _build_search_queries(raw, raw)
+            return state
         state["dataset_topic"] = "general dataset"
         return state
 

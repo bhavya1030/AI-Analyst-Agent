@@ -33,3 +33,9 @@ class AnalystState(TypedDict, total=False):
     columns: list[str]
     error: Optional[str]
     stop: bool
+    needs_user_data: bool
+    data_acquisition_options: list[dict[str, Any]]
+    dataset_discovery: dict[str, Any]
+    search_queries: list[str]
+    source: Optional[str]
+    dataset_source: Optional[str]
