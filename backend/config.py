@@ -24,7 +24,12 @@ class Settings(BaseSettings):
     # Local LLM calls are optional. Deterministic routing keeps the copilot responsive.
     USE_LLM_INTENT: bool = False
     USE_LLM_PLANNER: bool = False
-    USE_LLM_TOPIC: bool = False
+    # Topic extraction via Ollama for free-form / unknown subjects (ChatGPT-like).
+    USE_LLM_TOPIC: bool = True
+    # Persist successful topic→dataset mappings (product memory, not weight training).
+    LEARN_DATASETS: bool = True
+    # Use Ollama to expand aliases when learning a new dataset topic (can be slow).
+    USE_LLM_LEARN: bool = False
 
     @field_validator("OLLAMA_MODEL", "OLLAMA_SERVER_URL", mode="before")
     def _strip_ollama_strings(cls, value: str) -> str:

@@ -42,7 +42,7 @@ export default function UploadDropzone() {
         addMessage({
           id: `system-upload-${Date.now()}`,
           role: "assistant",
-          text: `Dataset “${file.name}” uploaded successfully. Ask a question and I’ll analyze this file.`,
+          text: `Dataset “${file.name}” is ready. Ask a question and I’ll analyze this file.`,
           timestamp: Date.now(),
         });
       } catch {
@@ -68,40 +68,45 @@ export default function UploadDropzone() {
   return (
     <section
       {...getRootProps()}
-      className={`rounded-2xl border-2 border-dashed px-4 py-3 transition ${
+      className={`rounded-2xl border border-dashed px-3 py-2.5 transition ${
         isDragActive
-          ? "border-sky-500 bg-sky-50 dark:bg-sky-950/40"
-          : "border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-950"
+          ? "border-blue-400 bg-blue-50/70"
+          : filePath
+            ? "border-emerald-200 bg-emerald-50/40"
+            : "border-slate-200 bg-slate-50/50"
       }`}
     >
       <input {...getInputProps()} />
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex min-w-0 items-center gap-2.5">
           <div
-            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${
-              isDragActive ? "bg-sky-100 text-sky-700" : "bg-white text-slate-500 shadow-sm dark:bg-slate-900"
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
+              isDragActive
+                ? "bg-blue-100 text-blue-700"
+                : filePath
+                  ? "bg-emerald-100 text-emerald-700"
+                  : "bg-white text-slate-500 shadow-soft ring-1 ring-slate-100"
             }`}
           >
-            {uploading ? <Loader2 className="animate-spin" size={20} /> : <Upload size={20} />}
+            {uploading ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />}
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-              {isDragActive ? "Drop dataset to load" : "Drag & drop a dataset"}
+            <p className="text-xs font-semibold text-slate-800">
+              {isDragActive
+                ? "Drop to upload"
+                : datasetName
+                  ? "Dataset loaded"
+                  : "Upload dataset (optional)"}
             </p>
-            <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+            <p className="truncate text-[11px] text-slate-500">
               {datasetName
-                ? `Loaded: ${datasetName}`
-                : "CSV / Excel from your computer — used for your questions"}
+                ? datasetName
+                : "CSV / Excel — or skip and ask for open data"}
             </p>
-            {filePath ? (
-              <p className="truncate text-[10px] text-slate-400" title={filePath}>
-                {filePath}
-              </p>
-            ) : null}
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           {filePath ? (
             <button
               type="button"
@@ -111,9 +116,9 @@ export default function UploadDropzone() {
                 saveSessionState("analytics-copilot-dataset", "");
                 saveSessionState("analytics-copilot-filepath", "");
               }}
-              className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+              className="btn-secondary !py-1.5"
             >
-              <X size={14} /> Clear
+              <X size={13} /> Clear
             </button>
           ) : null}
           <button
@@ -123,14 +128,14 @@ export default function UploadDropzone() {
               open();
             }}
             disabled={uploading}
-            className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:opacity-50 dark:bg-sky-600 dark:hover:bg-sky-500"
+            className="btn-secondary !py-1.5 disabled:opacity-50"
           >
-            <FileSpreadsheet size={14} />
-            {uploading ? "Uploading…" : "Browse files"}
+            <FileSpreadsheet size={13} />
+            {uploading ? "Uploading…" : "Browse"}
           </button>
         </div>
       </div>
-      {error ? <p className="mt-2 text-xs text-red-500">{error}</p> : null}
+      {error ? <p className="mt-1.5 text-[11px] font-medium text-red-500">{error}</p> : null}
     </section>
   );
 }

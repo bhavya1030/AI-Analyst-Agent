@@ -1,5 +1,11 @@
 export type Role = "user" | "assistant";
 
+export interface AcquisitionOption {
+  type?: string;
+  label: string;
+  how?: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: Role;
@@ -9,6 +15,11 @@ export interface ChatMessage {
   hypotheses?: string[];
   suggestions?: string[];
   timestamp?: number;
+  needsUserData?: boolean;
+  acquisitionOptions?: AcquisitionOption[];
+  relatedDatasets?: Array<Record<string, any>>;
+  discovery?: Record<string, any> | null;
+  source?: string;
 }
 
 export interface ChartPayload {
@@ -39,6 +50,12 @@ export interface AssistantPayload {
   dataset_url?: string;
   rows?: number;
   columns?: string[];
+  needs_user_data?: boolean;
+  data_acquisition_options?: AcquisitionOption[];
+  dataset_discovery?: Record<string, any>;
+  search_queries?: string[];
+  source?: string;
+  product_promise?: string;
 }
 
 export interface AssistantResponse extends AssistantPayload {

@@ -12,6 +12,19 @@ def recommendation_agent(state):
     operation = (state.get("last_operation") or "").lower()
     question = (state.get("question") or "").lower()
 
+    # When discovery failed, guide acquisition paths instead of fake analysis.
+    if state.get("needs_user_data") or state.get("data") is None:
+        recommendations.extend(
+            [
+                "Upload a CSV/Excel/JSON/Parquet file",
+                "Paste a direct download URL to a tabular file",
+                "Try a public topic (e.g. Analyze world GDP)",
+                "Search open data portals and paste a raw file link",
+            ]
+        )
+        state["recommended_next_steps"] = list(dict.fromkeys(recommendations))[:6]
+        return state
+
     # Context-aware conversational suggestions
     if time_cols and numeric_cols:
         target = focus or topic or numeric_cols[0]

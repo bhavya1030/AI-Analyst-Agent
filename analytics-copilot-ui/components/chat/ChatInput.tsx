@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { Loader2, Send } from "lucide-react";
+import { ArrowUp, Loader2 } from "lucide-react";
 import { askQuestion } from "@/services/api";
 import { useChatStore } from "@/store/chatStore";
 import { ChatMessage } from "@/types";
@@ -24,7 +24,7 @@ export default function ChatInput() {
   const sendMessage = useCallback(
     async (text: string) => {
       if (!text.trim()) {
-        setError("Please enter a question to continue.");
+        setError("Enter a question to continue.");
         return;
       }
 
@@ -69,6 +69,11 @@ export default function ChatInput() {
             : null,
           hypotheses: payload.hypotheses || [],
           suggestions: payload.recommended_next_steps || [],
+          needsUserData: Boolean(payload.needs_user_data),
+          acquisitionOptions: payload.data_acquisition_options || [],
+          relatedDatasets: payload.related_datasets || [],
+          discovery: payload.dataset_discovery || null,
+          source: payload.source || "",
           timestamp: Date.now(),
         };
 
@@ -129,14 +134,14 @@ export default function ChatInput() {
   };
 
   return (
-    <div className="border-t border-slate-100 pt-3 dark:border-slate-800">
-      <form className="flex items-end gap-2" onSubmit={handleSubmit}>
-        <div className="flex-1">
+    <div>
+      <form className="relative" onSubmit={handleSubmit}>
+        <div className="flex items-end gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-soft transition focus-within:border-blue-400 focus-within:shadow-[0_0_0_3px_rgba(37,99,235,0.1)]">
           <textarea
             id="question"
             rows={2}
-            className="w-full resize-none rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-sky-400 dark:focus:ring-sky-900"
-            placeholder='Ask anything… e.g. "Analyze India GDP" or "Forecast it for 10 years"'
+            className="max-h-36 min-h-[44px] flex-1 resize-none border-0 bg-transparent px-2.5 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 disabled:opacity-60"
+            placeholder='Ask anything… e.g. "Analyze India GDP" or paste a CSV URL'
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={(e) => {
@@ -147,26 +152,26 @@ export default function ChatInput() {
             }}
             disabled={loading}
           />
-          {filePath ? (
-            <p className="mt-1 px-1 text-[11px] text-emerald-600 dark:text-emerald-400">
-              Using uploaded file for this chat
-            </p>
-          ) : (
-            <p className="mt-1 px-1 text-[11px] text-slate-400">
-              No upload — agent may auto-discover open data
-            </p>
-          )}
+          <button
+            type="submit"
+            disabled={loading || !prompt.trim()}
+            className="btn-primary h-10 w-10 shrink-0 !rounded-xl !p-0"
+            aria-label="Send message"
+          >
+            {loading ? <Loader2 className="animate-spin" size={16} /> : <ArrowUp size={16} />}
+          </button>
         </div>
-        <button
-          type="submit"
-          disabled={loading}
-          className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-sky-600 text-white shadow-sm transition hover:bg-sky-500 disabled:cursor-not-allowed disabled:bg-slate-400"
-          aria-label="Send message"
-        >
-          {loading ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
-        </button>
       </form>
-      {error ? <p className="mt-2 text-sm text-red-500">{error}</p> : null}
+      <div className="mt-1.5 flex items-center justify-between gap-2 px-1">
+        <p className="text-[11px] text-slate-400">
+          {filePath ? (
+            <span className="text-emerald-600">Using uploaded file for this chat</span>
+          ) : (
+            "No upload — open-data discovery enabled"
+          )}
+        </p>
+        {error ? <p className="text-[11px] font-medium text-red-500">{error}</p> : null}
+      </div>
     </div>
   );
 }

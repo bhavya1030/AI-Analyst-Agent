@@ -42,11 +42,9 @@ export default function Sidebar() {
     void loadSessions();
   }, []);
 
-  /** Previous sessions only — never the active chat */
   const previousSessions = useMemo(() => {
     const rows = new Map<string, SessionRow>();
 
-    // Local history (user questions), excluding current session
     for (const item of history) {
       if (!item.sessionId || item.sessionId === sessionId) continue;
       const existing = rows.get(item.sessionId);
@@ -61,7 +59,6 @@ export default function Sidebar() {
       }
     }
 
-    // Cached snapshots
     for (const [id, snap] of Object.entries(sessionsById || {})) {
       if (!id || id === sessionId) continue;
       const firstUser = [...(snap.messages || [])].reverse().find((m) => m.role === "user");
@@ -78,10 +75,8 @@ export default function Sidebar() {
       }
     }
 
-    // Remote backend sessions
     for (const id of remoteSessions) {
       if (!id || id === sessionId || rows.has(id)) continue;
-      // Skip noisy system/test ids only if empty of value? Keep all except current.
       rows.set(id, {
         id,
         title: id,
@@ -119,21 +114,20 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="flex h-full w-full flex-col overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-card dark:border-slate-800 dark:bg-slate-900">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-4 dark:border-slate-800">
+    <aside className="surface flex h-full w-full flex-col overflow-hidden">
+      <div className="panel-header flex items-center justify-between gap-2">
         <div>
-          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">History</h2>
-          <p className="mt-0.5 text-xs text-slate-500">Previous sessions</p>
+          <p className="label-caps">History</p>
+          <h2 className="text-sm font-semibold text-slate-900">Sessions</h2>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1">
           <button
             type="button"
             title="Refresh"
             onClick={() => void loadSessions()}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+            className="btn-ghost h-8 w-8 !p-0"
           >
-            <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+            <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
           </button>
           <button
             type="button"
@@ -142,32 +136,30 @@ export default function Sidebar() {
               startNewChat();
               void loadSessions();
             }}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-slate-900 text-white transition hover:bg-slate-700 dark:bg-sky-600 dark:hover:bg-sky-500"
+            className="btn-primary h-8 w-8 !rounded-lg !p-0"
           >
-            <MessageSquarePlus size={16} />
+            <MessageSquarePlus size={15} />
           </button>
         </div>
       </div>
 
-      {/* Compact dataset line */}
-      <div className="border-b border-slate-100 px-4 py-2.5 dark:border-slate-800">
-        <p className="truncate text-xs text-slate-500">
-          <span className="font-medium text-slate-600 dark:text-slate-300">Dataset · </span>
-          {datasetName || "Auto-discover"}
+      <div className="border-b border-slate-100 px-4 py-2.5">
+        <p className="truncate text-[11px] text-slate-500">
+          <span className="font-medium text-slate-600">Active data · </span>
+          {datasetName || "Open-data mode"}
         </p>
       </div>
 
-      {/* Previous sessions list */}
       <div className="min-h-0 flex-1 overflow-y-auto p-2 scrollbar-thin">
         {previousSessions.length === 0 ? (
-          <div className="m-2 rounded-2xl border border-dashed border-slate-200 px-4 py-10 text-center dark:border-slate-700">
-            <p className="text-sm font-medium text-slate-600 dark:text-slate-300">No previous sessions</p>
-            <p className="mt-1 text-xs text-slate-400">
-              Start a new chat, then older ones will show here.
+          <div className="m-1 rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 px-3 py-8 text-center">
+            <p className="text-sm font-medium text-slate-600">No previous sessions</p>
+            <p className="mt-1 text-[11px] leading-5 text-slate-400">
+              Start a chat — earlier conversations will appear here.
             </p>
           </div>
         ) : (
-          <ul className="space-y-1">
+          <ul className="space-y-0.5">
             {previousSessions.map((row) => {
               const isOpening = openingId === row.id;
               return (
@@ -176,18 +168,13 @@ export default function Sidebar() {
                     type="button"
                     disabled={isOpening}
                     onClick={() => void openSessionInAnalyze(row.id, row.focusMessageId)}
-                    className={`group flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left transition
-                      hover:bg-sky-50 active:scale-[0.98] active:bg-sky-100
-                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400
-                      disabled:opacity-60
-                      dark:hover:bg-slate-800 dark:active:bg-slate-700
-                    `}
+                    className="group flex w-full items-center gap-2 rounded-xl px-2.5 py-2.5 text-left transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-60"
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="line-clamp-2 text-sm font-medium leading-snug text-slate-800 group-hover:text-sky-900 dark:text-slate-100 dark:group-hover:text-sky-100">
+                      <p className="line-clamp-2 text-[13px] font-medium leading-snug text-slate-800">
                         {row.title}
                       </p>
-                      <p className="mt-1 truncate text-[11px] text-slate-400 group-hover:text-sky-600/80 dark:group-hover:text-sky-300/80">
+                      <p className="mt-0.5 truncate text-[11px] text-slate-400">
                         {isOpening
                           ? "Opening…"
                           : row.timestamp
@@ -196,8 +183,8 @@ export default function Sidebar() {
                       </p>
                     </div>
                     <ChevronRight
-                      size={18}
-                      className="shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-sky-500 dark:text-slate-600"
+                      size={16}
+                      className="shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-blue-500"
                     />
                   </button>
                 </li>

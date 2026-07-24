@@ -240,6 +240,12 @@ def _build_state(session, question=None, file_path=None):
         "rows": int(dataset.shape[0]) if dataset is not None else 0,
         "columns": dataset.columns.tolist() if dataset is not None else [],
         "error": None,
+        "needs_user_data": False,
+        "data_acquisition_options": [],
+        "dataset_discovery": {},
+        "search_queries": [],
+        "source": None,
+        "dataset_source": None,
     }
 
 
@@ -274,6 +280,20 @@ def _stable_response(result, question=None):
         "columns": result.get("columns") or [],
         "error": result.get("error") or "",
         "error_type": result.get("error_type") or "",
+        # Open-world acquisition: open data / upload / connect sources
+        "needs_user_data": bool(result.get("needs_user_data")),
+        "data_acquisition_options": result.get("data_acquisition_options") or [],
+        "dataset_discovery": result.get("dataset_discovery") or {},
+        "search_queries": result.get("search_queries") or [],
+        "source": result.get("source") or result.get("dataset_source") or "",
+        "product_promise": (
+            "Ask about any topic. We'll find open data when we can, "
+            "use your files when you have them, or connect your sources — "
+            "then analyze, chart, and forecast."
+        ),
+        "dataset_learned": bool(result.get("dataset_learned")),
+        "learned_aliases": result.get("learned_aliases") or [],
+        "topic_via_llm": bool(result.get("topic_via_llm")),
     }
     return sanitize_for_json(payload)
 
@@ -281,6 +301,21 @@ def _stable_response(result, question=None):
 @app.get("/")
 def home():
     return {"message": "AI Analyst Backend Running"}
+
+
+@app.get("/v1/learned-datasets")
+@app.get("/learned-datasets")
+def learned_datasets(limit: int = 50):
+    """List datasets the copilot has remembered from successful loads."""
+    try:
+        from backend.memory.learned_datasets import list_learned_datasets
+
+        return sanitize_for_json({"learned_datasets": list_learned_datasets(limit=limit)})
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Could not list learned datasets", "details": str(exc)},
+        )
 
 
 @app.post("/upload")

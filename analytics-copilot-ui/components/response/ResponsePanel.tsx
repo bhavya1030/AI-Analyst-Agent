@@ -24,49 +24,80 @@ export default function ResponsePanel() {
   const displayHypotheses = active?.hypotheses?.length ? active.hypotheses : hypotheses;
   const displaySuggestions = active?.suggestions?.length ? active.suggestions : suggestions;
   const answer = active?.text || "";
+  const discovery = active?.discovery;
+  const hasContent =
+    Boolean(answer) ||
+    Boolean(displayCharts?.length) ||
+    Boolean(displayForecast) ||
+    Boolean(displayHypotheses?.length) ||
+    Boolean(displaySuggestions?.length);
 
   return (
-    <aside className="flex h-full w-full flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-card dark:border-slate-800 dark:bg-slate-900">
-      <div className="border-b border-slate-100 px-4 py-4 dark:border-slate-800">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-600">Response</p>
-        <h2 className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-50">Analysis output</h2>
-        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-          {datasetName ? `Working set: ${datasetName}` : "Charts, forecasts, and insights appear here"}
+    <aside className="surface flex h-full w-full flex-col overflow-hidden">
+      <div className="panel-header">
+        <p className="label-caps text-violet-600/80">Insights</p>
+        <h2 className="text-sm font-semibold text-slate-900">Analysis output</h2>
+        <p className="mt-0.5 truncate text-[11px] text-slate-400">
+          {datasetName ? `Working set · ${datasetName}` : "Charts, forecasts & next steps"}
         </p>
       </div>
 
-      <div className="flex-1 space-y-4 overflow-y-auto p-4 scrollbar-thin">
+      <div className="flex-1 space-y-3 overflow-y-auto p-3 scrollbar-thin md:p-4">
         {loading && !active ? (
-          <div className="flex h-40 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-950">
-            Analyzing your question…
+          <div className="flex h-36 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/70">
+            <div className="flex items-center gap-1">
+              <span className="typing-dot h-1.5 w-1.5 rounded-full bg-violet-500" />
+              <span className="typing-dot h-1.5 w-1.5 rounded-full bg-violet-500" />
+              <span className="typing-dot h-1.5 w-1.5 rounded-full bg-violet-500" />
+            </div>
+            <p className="mt-3 text-sm text-slate-500">Building response…</p>
           </div>
         ) : null}
 
-        {!loading && !active ? (
-          <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center dark:border-slate-700 dark:bg-slate-950">
-            <Sparkles className="mx-auto text-slate-400" size={28} />
-            <p className="mt-3 text-sm font-medium text-slate-700 dark:text-slate-200">No response yet</p>
-            <p className="mt-1 text-xs text-slate-500">
-              Ask something in the chat, or upload a dataset and query it.
+        {!loading && !hasContent ? (
+          <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-8 text-center">
+            <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl bg-white text-slate-400 shadow-soft ring-1 ring-slate-100">
+              <Sparkles size={18} />
+            </div>
+            <p className="mt-3 text-sm font-medium text-slate-700">No response yet</p>
+            <p className="mt-1 text-[11px] leading-5 text-slate-400">
+              Ask a question in chat. Insights, charts, and forecasts will show here.
             </p>
           </div>
         ) : null}
 
+        {discovery && discovery.status ? (
+          <div
+            className={`rounded-xl border px-3 py-2 text-[11px] ${
+              discovery.status === "found" || discovery.status === "provided"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                : "border-amber-200 bg-amber-50 text-amber-900"
+            }`}
+          >
+            <span className="font-semibold capitalize">{String(discovery.status).replace("_", " ")}</span>
+            {discovery.source ? ` · ${discovery.source}` : ""}
+            {discovery.title ? ` · ${discovery.title}` : ""}
+          </div>
+        ) : null}
+
         {answer ? (
-          <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
-            <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
-              <Sparkles size={16} className="text-violet-500" />
+          <section className="surface-muted p-3.5">
+            <div className="section-title mb-2">
+              <Sparkles size={15} className="text-violet-500" />
               Answer
             </div>
-            <p className="whitespace-pre-wrap text-sm leading-7 text-slate-700 dark:text-slate-200">{answer}</p>
+            <p className="whitespace-pre-wrap text-sm leading-6 text-slate-700">{answer}</p>
           </section>
         ) : null}
 
         {displayCharts?.length ? (
-          <section className="space-y-3">
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
-              <BarChart3 size={16} className="text-sky-500" />
+          <section className="space-y-2.5">
+            <div className="section-title">
+              <BarChart3 size={15} className="text-blue-500" />
               Charts
+              <span className="ml-auto text-[11px] font-medium text-slate-400">
+                {displayCharts.length}
+              </span>
             </div>
             {displayCharts.map((chart) => (
               <ChartRenderer key={chart.id} chart={chart} />
@@ -75,9 +106,9 @@ export default function ResponsePanel() {
         ) : null}
 
         {displayForecast ? (
-          <section>
-            <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
-              <LineChart size={16} className="text-emerald-500" />
+          <section className="space-y-2">
+            <div className="section-title">
+              <LineChart size={15} className="text-emerald-500" />
               Forecast
             </div>
             <ForecastPanel forecast={displayForecast} />
@@ -85,16 +116,16 @@ export default function ResponsePanel() {
         ) : null}
 
         {displayHypotheses?.length ? (
-          <section className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-950">
-            <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
-              <Lightbulb size={16} className="text-amber-500" />
+          <section className="surface-muted p-3.5">
+            <div className="section-title mb-2">
+              <Lightbulb size={15} className="text-amber-500" />
               Hypotheses
             </div>
-            <ul className="space-y-2">
+            <ul className="space-y-1.5">
               {displayHypotheses.map((item, index) => (
                 <li
                   key={`${item}-${index}`}
-                  className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-100"
+                  className="rounded-xl bg-white px-3 py-2 text-xs leading-5 text-slate-700 ring-1 ring-slate-100"
                 >
                   {item}
                 </li>
@@ -104,7 +135,7 @@ export default function ResponsePanel() {
         ) : null}
 
         {displaySuggestions?.length ? (
-          <section className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
+          <section className="surface-muted p-3.5">
             <SuggestionsPanel suggestions={displaySuggestions} />
           </section>
         ) : null}

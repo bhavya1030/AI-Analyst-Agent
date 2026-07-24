@@ -44,6 +44,34 @@ DATASET_KEYWORDS = [
     "covid",
     "electric vehicle",
     "co2",
+    "housing",
+    "literacy",
+    "cryptocurrency",
+    "bitcoin",
+    "oil",
+    "gold",
+    "silver",
+    "agriculture",
+    "traffic",
+    "crime",
+    "http://",
+    "https://",
+]
+
+# Phrases that mean: discover open data for whatever topic the user named.
+OPEN_WORLD_PHRASES = [
+    "analyze ",
+    "analyse ",
+    "study ",
+    "explore ",
+    "investigate ",
+    "dataset about",
+    "data on ",
+    "data about ",
+    "find data",
+    "open data",
+    "find dataset",
+    "search for data",
 ]
 
 
@@ -190,10 +218,11 @@ def _infer_operation(plan: list[str]) -> str | None:
 
 
 def _discovery_prefix(state, force: bool = False) -> list[str]:
-    """Steps to discover and load data when nothing is active."""
+    """Steps to discover and load data when nothing is active or topic changed."""
     if state.get("data") is not None and not force:
         return []
-    if state.get("file_path"):
+    # User upload is only preferred when we are not switching topics.
+    if state.get("file_path") and not force and not state.get("topic_mismatch"):
         return ["load_data"]
     return [
         "dataset_topic_agent",
@@ -221,9 +250,34 @@ def _analysis_suffix(include_viz: bool = True) -> list[str]:
     return steps
 
 
+def _needs_rediscovery(state, dataset_requested: bool) -> bool:
+    """True when active data should NOT be reused for this question."""
+    if state.get("data") is None:
+        return False
+    if state.get("topic_mismatch"):
+        return True
+    if state.get("force_reload_dataset"):
+        return True
+    # New named topic / open-world ask while another dataset is loaded.
+    if dataset_requested and not state.get("reuse_active_dataset"):
+        return True
+    return False
+
+
+def _forecast_suffix() -> list[str]:
+    return [
+        "profile_data",
+        "forecast_data",
+        "chart_interpretation",
+        "recommend_analysis",
+        "generate_insight",
+    ]
+
+
 def _build_rule_based_plan(state, normalized, intents, dataset_requested):
     has_data = state.get("data") is not None
-    reuse = bool(state.get("reuse_active_dataset")) and has_data
+    reuse = bool(state.get("reuse_active_dataset")) and has_data and not state.get("topic_mismatch")
+    rediscover = _needs_rediscovery(state, dataset_requested)
 
     # --- Comparison (country or multi-metric) ---
     if "comparison" in intents:
@@ -250,9 +304,9 @@ def _build_rule_based_plan(state, normalized, intents, dataset_requested):
                 state["stop"] = True
                 return []
 
-        plan = _discovery_prefix(state)
+        plan = _discovery_prefix(state, force=rediscover)
         # Comparison agent can load its own sources; still profile when data exists.
-        if has_data or plan:
+        if (has_data and not rediscover) or plan:
             plan = plan + ["profile_data"]
         plan.extend(["compare_datasets", "recommend_analysis", "generate_insight"])
         return plan
@@ -268,27 +322,18 @@ def _build_rule_based_plan(state, normalized, intents, dataset_requested):
             state["stop"] = True
             return []
 
-        if reuse or has_data:
-            return [
-                "profile_data",
-                "forecast_data",
-                "chart_interpretation",
-                "recommend_analysis",
-                "generate_insight",
-            ]
+        # Only reuse active data for true follow-ups ("forecast it"), never for a new subject.
+        if reuse and not rediscover:
+            return _forecast_suffix()
 
-        return _discovery_prefix(state) + [
+        return _discovery_prefix(state, force=rediscover or not has_data) + [
             "clean_data",
-            "profile_data",
-            "forecast_data",
-            "chart_interpretation",
-            "recommend_analysis",
-            "generate_insight",
+            *_forecast_suffix(),
         ]
 
     # --- Explicit visualization ---
     if "visualization" in intents and "eda" not in intents and "dataset_autoload" not in intents:
-        if reuse or has_data:
+        if reuse and not rediscover:
             return [
                 "profile_data",
                 "run_viz",
@@ -296,7 +341,7 @@ def _build_rule_based_plan(state, normalized, intents, dataset_requested):
                 "recommend_analysis",
                 "generate_insight",
             ]
-        return _discovery_prefix(state) + [
+        return _discovery_prefix(state, force=rediscover or not has_data) + [
             "clean_data",
             "profile_data",
             "run_viz",
@@ -307,9 +352,9 @@ def _build_rule_based_plan(state, normalized, intents, dataset_requested):
 
     # --- Statistical QA ---
     if "statistical_analysis" in intents and "eda" not in intents:
-        if reuse or has_data:
+        if reuse and not rediscover:
             return ["profile_data", "run_qa", "recommend_analysis", "generate_insight"]
-        return _discovery_prefix(state) + [
+        return _discovery_prefix(state, force=rediscover or not has_data) + [
             "clean_data",
             "profile_data",
             "run_qa",
@@ -319,15 +364,24 @@ def _build_rule_based_plan(state, normalized, intents, dataset_requested):
 
     # --- Full auto analysis (default ChatGPT-like path) ---
     # Covers: analyze X, dataset_autoload, eda, explanation, open-ended topics
-    if reuse or (has_data and not dataset_requested):
+    if reuse and not rediscover:
+        return ["profile_data"] + _analysis_suffix(include_viz=True)
+    if has_data and not dataset_requested and not rediscover:
         return ["profile_data"] + _analysis_suffix(include_viz=True)
 
-    # Discovery + full analysis pipeline
+    # Discovery + full analysis pipeline (open data when possible)
     plan = _discovery_prefix(state) + _analysis_suffix(include_viz=True)
 
     # If user also asked for a chart explicitly, multi-viz is optional; run_viz is enough.
     if "visualization" in intents and "run_viz" not in plan:
         plan.insert(-2, "run_viz")
+
+    # Explicit forecasting alongside analysis of a new topic.
+    if "forecasting" in intents and "forecast_data" not in plan:
+        if "generate_insight" in plan:
+            plan.insert(plan.index("generate_insight"), "forecast_data")
+        else:
+            plan.append("forecast_data")
 
     return plan
 
@@ -351,7 +405,13 @@ def planner_agent(state):
     state["intents"] = intents
     state["last_intent"] = intents[0] if intents else None
 
-    dataset_requested = any(keyword in normalized for keyword in DATASET_KEYWORDS)
+    dataset_requested = any(keyword in normalized for keyword in DATASET_KEYWORDS) or any(
+        phrase in normalized for phrase in OPEN_WORLD_PHRASES
+    )
+    # Open-world: dataset_autoload intent also means "go find public data".
+    if "dataset_autoload" in intents or "dataset_search" in intents:
+        dataset_requested = True
+
     dataset_available = bool(
         state.get("data") is not None
         or state.get("dataset_url")
@@ -410,7 +470,12 @@ def planner_agent(state):
         }]
 
     # Active dataset reuse (follow-ups like "forecast it"): skip rediscovery.
-    if state.get("data") is not None and state.get("reuse_active_dataset"):
+    rediscover = _needs_rediscovery(state, dataset_requested) or state.get("topic_mismatch")
+    if (
+        state.get("data") is not None
+        and state.get("reuse_active_dataset")
+        and not rediscover
+    ):
         plan = [
             step
             for step in plan
@@ -422,20 +487,33 @@ def planner_agent(state):
                 "fetch_data",
             }
         ]
-    elif state.get("data") is not None and not dataset_requested:
+    elif state.get("data") is not None and not dataset_requested and not rediscover:
         # Same session, no new topic named — keep working on the active frame.
         plan = [step for step in plan if step not in {"fetch_data", "dataset_search_agent"}]
-    elif state.get("data") is not None and dataset_requested and not state.get("reuse_active_dataset"):
-        # User asked about a named topic while another frame is loaded — rediscover.
-        # Data Engineer will replace state["data"] on successful fetch.
-        if "fetch_data" not in plan:
-            insert_at = 0
-            for marker in ("dataset_search_agent", "dataset_topic_agent", "load_data"):
-                if marker in plan:
-                    insert_at = plan.index(marker) + 1
-            plan.insert(insert_at, "fetch_data")
-        # Force engineer to download even if a previous frame is present.
+    elif state.get("data") is not None and rediscover:
+        # User asked about a NEW topic while another frame is loaded — full rediscovery.
+        # Must re-run topic + search; otherwise stale "india gdp" URL is reused.
         state["force_reload_dataset"] = True
+        state["reuse_active_dataset"] = False
+        # Drop stale URL so search cannot reload the previous dataset.
+        state["dataset_url"] = None
+        prefix = [
+            "dataset_topic_agent",
+            "dataset_search_agent",
+            "fetch_data",
+        ]
+        plan = prefix + [
+            step
+            for step in plan
+            if step
+            not in {
+                "dataset_topic_agent",
+                "dataset_topic_detection",
+                "dataset_search_agent",
+                "fetch_data",
+                "load_data",
+            }
+        ]
 
     if state.get("file_path") and state.get("data") is None and "load_data" not in plan:
         plan.insert(0, "load_data")
