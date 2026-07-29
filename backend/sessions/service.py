@@ -1,11 +1,11 @@
-"""Session persistence service (Phase 1).
+"""Session persistence service (Phase 1 + Phase 3).
 
 Responsibilities:
   - CRUD for AnalysisSession
-  - Append chat messages
-  - Store restorable artifacts (charts, forecasts, EDA, insights)
-  - Dual-write to legacy session_memory for backward compatibility
-  - Lazy-migrate legacy SessionMemory rows into AnalysisSession
+  - Append chat messages / artifacts
+  - Dual-write to legacy session_memory
+  - Phase 3: rename, archive, restore, pin, favorite, duplicate,
+    export/import, recent, paginated list with sort + filters
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from sqlalchemy import asc, desc, inspect, or_, text
 from sqlalchemy.orm import Session as DbSession
 from sqlalchemy.orm import selectinload
 
@@ -28,6 +29,26 @@ logger = get_logger(__name__)
 _schema_lock = threading.Lock()
 _schema_ready = False
 
+EXPORT_FORMAT_VERSION = "1.0"
+
+# Columns that may be added after initial Phase-1 deploy (SQLite ALTER)
+_PHASE3_COLUMNS: dict[str, str] = {
+    "pinned": "BOOLEAN DEFAULT 0",
+    "pin_order": "INTEGER",
+}
+
+SORTABLE_FIELDS = frozenset(
+    {
+        "updated_at",
+        "created_at",
+        "last_activity_at",
+        "title",
+        "message_count",
+        "pin_order",
+        "status",
+    }
+)
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -36,19 +57,41 @@ def _utcnow() -> datetime:
 def ensure_session_tables() -> None:
     """Create analysis_sessions / session_messages / session_artifacts if missing."""
     global _schema_ready
-    if _schema_ready:
-        return
     with _schema_lock:
-        if _schema_ready:
-            return
-        # Import models so they register on Base.metadata
-        from backend.sessions import models as _models  # noqa: F401
+        if not _schema_ready:
+            from backend.sessions import models as _models  # noqa: F401
 
-        AnalysisSession.__table__.create(bind=engine, checkfirst=True)
-        SessionMessage.__table__.create(bind=engine, checkfirst=True)
-        SessionArtifact.__table__.create(bind=engine, checkfirst=True)
-        _schema_ready = True
-        logger.info("Session persistence tables ready")
+            AnalysisSession.__table__.create(bind=engine, checkfirst=True)
+            SessionMessage.__table__.create(bind=engine, checkfirst=True)
+            SessionArtifact.__table__.create(bind=engine, checkfirst=True)
+            _schema_ready = True
+            logger.info("Session persistence tables ready")
+        # Always reconcile Phase-3 columns (safe if already present)
+        _ensure_phase3_columns()
+
+
+def _ensure_phase3_columns() -> None:
+    """Add Phase-3 columns to existing SQLite tables (idempotent)."""
+    try:
+        with engine.begin() as connection:
+            inspector = inspect(connection)
+            if "analysis_sessions" not in inspector.get_table_names():
+                return
+            existing = {
+                col["name"] for col in inspector.get_columns("analysis_sessions")
+            }
+            for name, col_type in _PHASE3_COLUMNS.items():
+                if name in existing:
+                    continue
+                connection.execute(
+                    text(f"ALTER TABLE analysis_sessions ADD COLUMN {name} {col_type}")
+                )
+                logger.info("Added analysis_sessions column", extra={"column": name})
+    except Exception as exc:
+        logger.warning(
+            "Phase-3 column migration skipped",
+            extra={"error": str(exc)},
+        )
 
 
 class SessionNotFoundError(Exception):
@@ -134,6 +177,8 @@ class SessionService:
                 favorite=False,
                 archived=False,
                 deleted=False,
+                pinned=False,
+                pin_order=None,
                 message_count=0,
             )
             db.add(row)
@@ -211,36 +256,130 @@ class SessionService:
         include_archived: bool = True,
         limit: int = 100,
         offset: int = 0,
+        sort_by: str = "updated_at",
+        order: str = "desc",
+        status: str | None = None,
+        favorite: bool | None = None,
+        pinned: bool | None = None,
+        archived: bool | None = None,
+        tag: str | None = None,
+        dataset_topic: str | None = None,
+        q: str | None = None,
     ) -> dict[str, Any]:
+        """
+        Paginated session list with sorting and filtering (Phase 3).
+
+        Sort: updated_at | created_at | last_activity_at | title | message_count | pin_order | status
+        Filters: status, favorite, pinned, archived, tag, dataset_topic, free-text q
+        Pinned sessions always surface first, then the chosen sort field.
+        """
         ensure_session_tables()
         limit = max(1, min(int(limit or 100), 500))
         offset = max(0, int(offset or 0))
+        sort_by = (sort_by or "updated_at").strip().lower()
+        if sort_by not in SORTABLE_FIELDS:
+            sort_by = "updated_at"
+        order_dir = (order or "desc").strip().lower()
+        if order_dir not in {"asc", "desc"}:
+            order_dir = "desc"
+
+        applied_filters: dict[str, Any] = {}
 
         db = SessionLocal()
         try:
-            # Ensure any legacy-only rows appear after migration on list
             self._migrate_all_legacy(db, user_id=user_id)
 
-            q = db.query(AnalysisSession)
+            q_db = db.query(AnalysisSession)
             if user_id:
-                q = q.filter(AnalysisSession.user_id == user_id)
-            if not include_deleted:
-                q = q.filter(AnalysisSession.deleted.is_(False))
-            if not include_archived:
-                q = q.filter(AnalysisSession.archived.is_(False))
+                q_db = q_db.filter(AnalysisSession.user_id == user_id)
+                applied_filters["user_id"] = user_id
 
-            total = q.count()
-            rows = (
-                q.order_by(AnalysisSession.updated_at.desc())
-                .offset(offset)
-                .limit(limit)
-                .all()
-            )
+            # archived filter takes precedence over include_archived flag
+            if archived is not None:
+                q_db = q_db.filter(AnalysisSession.archived.is_(bool(archived)))
+                applied_filters["archived"] = bool(archived)
+            elif not include_archived:
+                q_db = q_db.filter(AnalysisSession.archived.is_(False))
+                applied_filters["include_archived"] = False
+
+            if not include_deleted:
+                q_db = q_db.filter(AnalysisSession.deleted.is_(False))
+            else:
+                applied_filters["include_deleted"] = True
+
+            if status:
+                status_norm = status.strip().lower()
+                q_db = q_db.filter(AnalysisSession.status == status_norm)
+                applied_filters["status"] = status_norm
+
+            if favorite is not None:
+                q_db = q_db.filter(AnalysisSession.favorite.is_(bool(favorite)))
+                applied_filters["favorite"] = bool(favorite)
+
+            if pinned is not None:
+                q_db = q_db.filter(AnalysisSession.pinned.is_(bool(pinned)))
+                applied_filters["pinned"] = bool(pinned)
+
+            if dataset_topic:
+                topic = dataset_topic.strip()
+                q_db = q_db.filter(AnalysisSession.dataset_topic.ilike(f"%{topic}%"))
+                applied_filters["dataset_topic"] = topic
+
+            if tag:
+                # JSON array membership differs across dialects; apply in Python below.
+                applied_filters["tag"] = tag.strip()
+
+            if q:
+                query_text = q.strip()
+                like = f"%{query_text}%"
+                q_db = q_db.filter(
+                    or_(
+                        AnalysisSession.title.ilike(like),
+                        AnalysisSession.last_query.ilike(like),
+                        AnalysisSession.dataset_topic.ilike(like),
+                        AnalysisSession.dataset_name.ilike(like),
+                    )
+                )
+                applied_filters["q"] = query_text
+
+            # Ordering: pinned first, then sort field
+            sort_column = getattr(AnalysisSession, sort_by, AnalysisSession.updated_at)
+            primary = desc(sort_column) if order_dir == "desc" else asc(sort_column)
+            # pin_order: lower numbers first among pinned; nulls last via secondary updated_at
+            pin_order_col = asc(AnalysisSession.pin_order)
+            order_clauses = [
+                desc(AnalysisSession.pinned),
+                pin_order_col,
+                primary,
+            ]
+
+            # Tag filter requires materialization for SQLite JSON portability
+            if tag:
+                all_rows = q_db.order_by(*order_clauses).all()
+                tag_clean = tag.strip().lower()
+                filtered = [
+                    r
+                    for r in all_rows
+                    if any(
+                        str(t).lower() == tag_clean for t in (r.tags_json or [])
+                    )
+                ]
+                total = len(filtered)
+                rows = filtered[offset : offset + limit]
+            else:
+                total = q_db.count()
+                rows = (
+                    q_db.order_by(*order_clauses).offset(offset).limit(limit).all()
+                )
+
             return {
                 "items": [self._summary_dict(r) for r in rows],
                 "total": total,
                 "limit": limit,
                 "offset": offset,
+                "sort_by": sort_by,
+                "order": order_dir,
+                "filters": applied_filters,
             }
         finally:
             db.close()
@@ -329,12 +468,13 @@ class SessionService:
         dataset_topic: str | None = None,
         tags: list[str] | None = None,
         favorite: bool | None = None,
+        pinned: bool | None = None,
         status: str | None = None,
     ) -> dict[str, Any]:
         ensure_session_tables()
         db = SessionLocal()
         try:
-            row = self._require_row(db, session_id)
+            row = self._require_row(db, session_id, allow_deleted=True)
             if title is not None:
                 cleaned = title.strip()
                 if cleaned:
@@ -353,9 +493,14 @@ class SessionService:
                 row.tags_json = list(tags)
             if favorite is not None:
                 row.favorite = bool(favorite)
+            if pinned is not None:
+                row.pinned = bool(pinned)
+                if not row.pinned:
+                    row.pin_order = None
             if status is not None:
                 if status == "archived":
                     row.archived = True
+                    row.deleted = False
                     row.status = "archived"
                 elif status == "active":
                     row.archived = False
@@ -368,6 +513,413 @@ class SessionService:
             return self._summary_dict(row)
         finally:
             db.close()
+
+    # ------------------------------------------------------------------
+    # Phase 3 — lifecycle & organization
+    # ------------------------------------------------------------------
+
+    def rename_session(self, session_id: str, title: str) -> dict[str, Any]:
+        cleaned = (title or "").strip()
+        if not cleaned:
+            raise ValueError("title must be non-empty")
+        return self.update_session(session_id, title=cleaned)
+
+    def archive_session(self, session_id: str) -> dict[str, Any]:
+        ensure_session_tables()
+        db = SessionLocal()
+        try:
+            row = self._require_row(db, session_id, allow_deleted=False)
+            row.archived = True
+            row.deleted = False
+            row.status = "archived"
+            row.updated_at = _utcnow()
+            db.commit()
+            db.refresh(row)
+            logger.info("Session archived", extra={"session_id": session_id})
+            return self._summary_dict(row)
+        finally:
+            db.close()
+
+    def restore_session(self, session_id: str) -> dict[str, Any]:
+        """Unarchive and/or undelete a session back to active."""
+        ensure_session_tables()
+        db = SessionLocal()
+        try:
+            row = self._require_row(db, session_id, allow_deleted=True)
+            row.archived = False
+            row.deleted = False
+            row.status = "active"
+            row.updated_at = _utcnow()
+            row.last_activity_at = row.updated_at
+            db.commit()
+            db.refresh(row)
+            self._dual_write_legacy(db, row)
+            logger.info("Session restored", extra={"session_id": session_id})
+            return self._summary_dict(row)
+        finally:
+            db.close()
+
+    def set_favorite(self, session_id: str, favorite: bool = True) -> dict[str, Any]:
+        ensure_session_tables()
+        db = SessionLocal()
+        try:
+            row = self._require_row(db, session_id, allow_deleted=False)
+            row.favorite = bool(favorite)
+            row.updated_at = _utcnow()
+            db.commit()
+            db.refresh(row)
+            return self._summary_dict(row)
+        finally:
+            db.close()
+
+    def set_pinned(
+        self,
+        session_id: str,
+        pinned: bool = True,
+        *,
+        pin_order: int | None = None,
+    ) -> dict[str, Any]:
+        ensure_session_tables()
+        db = SessionLocal()
+        try:
+            row = self._require_row(db, session_id, allow_deleted=False)
+            row.pinned = bool(pinned)
+            if row.pinned:
+                if pin_order is not None:
+                    row.pin_order = int(pin_order)
+                elif row.pin_order is None:
+                    # Append to end of pin stack
+                    max_order = (
+                        db.query(AnalysisSession.pin_order)
+                        .filter(
+                            AnalysisSession.user_id == row.user_id,
+                            AnalysisSession.pinned.is_(True),
+                            AnalysisSession.pin_order.isnot(None),
+                        )
+                        .order_by(desc(AnalysisSession.pin_order))
+                        .first()
+                    )
+                    row.pin_order = int(max_order[0]) + 1 if max_order and max_order[0] is not None else 0
+            else:
+                row.pin_order = None
+            row.updated_at = _utcnow()
+            db.commit()
+            db.refresh(row)
+            return self._summary_dict(row)
+        finally:
+            db.close()
+
+    def duplicate_session(
+        self,
+        session_id: str,
+        *,
+        title: str | None = None,
+        include_messages: bool = True,
+        include_artifacts: bool = True,
+    ) -> dict[str, Any]:
+        ensure_session_tables()
+        db = SessionLocal()
+        try:
+            source = (
+                db.query(AnalysisSession)
+                .options(
+                    selectinload(AnalysisSession.messages),
+                    selectinload(AnalysisSession.artifacts),
+                )
+                .filter(AnalysisSession.session_id == session_id)
+                .first()
+            )
+            if source is None or source.deleted:
+                raise SessionNotFoundError(session_id)
+
+            now = _utcnow()
+            new_id = str(uuid.uuid4())
+            new_title = (title or "").strip() or f"Copy of {source.title or 'session'}"
+
+            clone = AnalysisSession(
+                session_id=new_id,
+                user_id=source.user_id or "anonymous",
+                title=new_title[:512],
+                created_at=now,
+                updated_at=now,
+                last_activity_at=now,
+                dataset_id=source.dataset_id,
+                dataset_name=source.dataset_name,
+                dataset_path=source.dataset_path,
+                dataset_url=source.dataset_url,
+                dataset_topic=source.dataset_topic,
+                last_column=source.last_column,
+                last_columns=source.last_columns,
+                last_chart_type=source.last_chart_type,
+                last_intent=source.last_intent,
+                last_operation=source.last_operation,
+                last_forecast_target=source.last_forecast_target,
+                last_query=source.last_query,
+                last_insight=source.last_insight,
+                eda_summary=source.eda_summary,
+                status="active",
+                favorite=False,
+                archived=False,
+                deleted=False,
+                pinned=False,
+                pin_order=None,
+                message_count=0,
+                tags_json=list(source.tags_json or []),
+                current_dataset=source.current_dataset,
+                last_used_columns=source.last_used_columns,
+            )
+            db.add(clone)
+            db.flush()
+
+            msg_id_map: dict[str, str] = {}
+            if include_messages:
+                for msg in sorted(source.messages or [], key=lambda m: m.seq or 0):
+                    new_msg_id = str(uuid.uuid4())
+                    msg_id_map[msg.id] = new_msg_id
+                    db.add(
+                        SessionMessage(
+                            id=new_msg_id,
+                            session_id=new_id,
+                            seq=msg.seq,
+                            role=msg.role,
+                            content=msg.content or "",
+                            created_at=msg.created_at or now,
+                            payload=msg.payload,
+                        )
+                    )
+                clone.message_count = len(msg_id_map)
+
+            if include_artifacts:
+                for art in source.artifacts or []:
+                    new_msg_ref = None
+                    if art.message_id and art.message_id in msg_id_map:
+                        new_msg_ref = msg_id_map[art.message_id]
+                    db.add(
+                        SessionArtifact(
+                            id=str(uuid.uuid4()),
+                            session_id=new_id,
+                            message_id=new_msg_ref,
+                            kind=art.kind,
+                            title=art.title,
+                            created_at=art.created_at or now,
+                            content=art.content,
+                            meta=art.meta,
+                        )
+                    )
+
+            db.commit()
+            db.refresh(clone)
+            self._dual_write_legacy(db, clone)
+            summary = self._summary_dict(clone)
+            summary["source_session_id"] = session_id
+            logger.info(
+                "Session duplicated",
+                extra={"source": session_id, "session_id": new_id},
+            )
+            return summary
+        finally:
+            db.close()
+
+    def export_session(self, session_id: str) -> dict[str, Any]:
+        ensure_session_tables()
+        detail = self.get_session_detail(session_id, include_deleted=True)
+        messages = detail.get("chat_history") or []
+        artifacts = detail.get("artifacts") or []
+        session_meta = {
+            k: detail.get(k)
+            for k in (
+                "session_id",
+                "title",
+                "created_at",
+                "updated_at",
+                "last_activity_at",
+                "dataset_id",
+                "dataset_name",
+                "dataset_path",
+                "dataset_url",
+                "dataset_topic",
+                "current_dataset",
+                "last_used_columns",
+                "status",
+                "favorite",
+                "archived",
+                "deleted",
+                "pinned",
+                "pin_order",
+                "tags",
+                "message_count",
+                "last_query",
+                "last_insight",
+                "last_column",
+                "last_columns",
+                "last_chart_type",
+                "last_intent",
+                "last_operation",
+                "last_forecast_target",
+                "eda_summary",
+            )
+        }
+        return sanitize_for_json(
+            {
+                "format_version": EXPORT_FORMAT_VERSION,
+                "exported_at": _utcnow().isoformat(),
+                "session": session_meta,
+                "messages": messages,
+                "artifacts": artifacts,
+            }
+        )
+
+    def import_session(
+        self,
+        bundle: dict[str, Any],
+        *,
+        session_id: str | None = None,
+        title: str | None = None,
+        user_id: str = "anonymous",
+    ) -> dict[str, Any]:
+        ensure_session_tables()
+        if not isinstance(bundle, dict):
+            raise ValueError("bundle must be an object")
+
+        session_meta = bundle.get("session") or {}
+        if not isinstance(session_meta, dict):
+            session_meta = {}
+        messages = bundle.get("messages") or []
+        artifacts = bundle.get("artifacts") or []
+        if not isinstance(messages, list):
+            messages = []
+        if not isinstance(artifacts, list):
+            artifacts = []
+
+        now = _utcnow()
+        new_id = (session_id or "").strip() or str(uuid.uuid4())
+        source_id = session_meta.get("session_id")
+        resolved_title = (
+            (title or "").strip()
+            or str(session_meta.get("title") or "").strip()
+            or "Imported session"
+        )
+
+        db = SessionLocal()
+        try:
+            existing = (
+                db.query(AnalysisSession)
+                .filter(AnalysisSession.session_id == new_id)
+                .first()
+            )
+            if existing is not None:
+                raise ValueError(f"session_id '{new_id}' already exists")
+
+            row = AnalysisSession(
+                session_id=new_id,
+                user_id=user_id or "anonymous",
+                title=resolved_title[:512],
+                created_at=now,
+                updated_at=now,
+                last_activity_at=now,
+                dataset_id=session_meta.get("dataset_id"),
+                dataset_name=session_meta.get("dataset_name"),
+                dataset_path=session_meta.get("dataset_path") or None,
+                dataset_url=session_meta.get("dataset_url") or None,
+                dataset_topic=session_meta.get("dataset_topic") or None,
+                last_column=session_meta.get("last_column") or None,
+                last_columns=session_meta.get("last_columns"),
+                last_chart_type=session_meta.get("last_chart_type") or None,
+                last_intent=session_meta.get("last_intent") or None,
+                last_operation=session_meta.get("last_operation") or None,
+                last_forecast_target=session_meta.get("last_forecast_target") or None,
+                last_query=session_meta.get("last_query") or None,
+                last_insight=session_meta.get("last_insight") or None,
+                eda_summary=session_meta.get("eda_summary") or None,
+                status="active",
+                favorite=bool(session_meta.get("favorite")),
+                archived=False,
+                deleted=False,
+                pinned=bool(session_meta.get("pinned")),
+                pin_order=session_meta.get("pin_order"),
+                message_count=0,
+                tags_json=list(session_meta.get("tags") or []),
+                current_dataset=session_meta.get("current_dataset"),
+                last_used_columns=session_meta.get("last_used_columns"),
+            )
+            db.add(row)
+            db.flush()
+
+            msg_id_map: dict[str, str] = {}
+            for idx, msg in enumerate(messages):
+                if not isinstance(msg, dict):
+                    continue
+                old_id = str(msg.get("id") or "")
+                new_msg_id = str(uuid.uuid4())
+                if old_id:
+                    msg_id_map[old_id] = new_msg_id
+                seq = msg.get("seq")
+                if seq is None:
+                    seq = idx + 1
+                db.add(
+                    SessionMessage(
+                        id=new_msg_id,
+                        session_id=new_id,
+                        seq=int(seq),
+                        role=str(msg.get("role") or "assistant"),
+                        content=str(msg.get("content") or ""),
+                        created_at=now,
+                        payload=msg.get("payload"),
+                    )
+                )
+            row.message_count = len(msg_id_map) if msg_id_map else len(
+                [m for m in messages if isinstance(m, dict)]
+            )
+
+            for art in artifacts:
+                if not isinstance(art, dict):
+                    continue
+                old_msg = art.get("message_id")
+                new_msg_ref = msg_id_map.get(str(old_msg)) if old_msg else None
+                db.add(
+                    SessionArtifact(
+                        id=str(uuid.uuid4()),
+                        session_id=new_id,
+                        message_id=new_msg_ref,
+                        kind=str(art.get("kind") or "analysis_result"),
+                        title=art.get("title"),
+                        created_at=now,
+                        content=art.get("content"),
+                        meta=art.get("meta"),
+                    )
+                )
+
+            db.commit()
+            db.refresh(row)
+            self._dual_write_legacy(db, row)
+            summary = self._summary_dict(row)
+            summary["imported"] = True
+            summary["source_session_id"] = source_id
+            logger.info(
+                "Session imported",
+                extra={"session_id": new_id, "source_session_id": source_id},
+            )
+            return summary
+        finally:
+            db.close()
+
+    def recent_sessions(
+        self,
+        *,
+        user_id: str | None = None,
+        limit: int = 10,
+        include_archived: bool = False,
+    ) -> dict[str, Any]:
+        """Most recently active non-deleted sessions (pinned still sort first)."""
+        return self.list_sessions(
+            user_id=user_id,
+            include_deleted=False,
+            include_archived=include_archived,
+            limit=limit,
+            offset=0,
+            sort_by="last_activity_at",
+            order="desc",
+        )
 
     def delete_session(self, session_id: str, *, hard: bool = False) -> dict[str, Any]:
         ensure_session_tables()
@@ -1020,6 +1572,7 @@ class SessionService:
                 "title": row.title or "New analysis",
                 "created_at": row.created_at,
                 "updated_at": row.updated_at,
+                "last_activity_at": row.last_activity_at,
                 "dataset_id": row.dataset_id,
                 "dataset_name": row.dataset_name,
                 "dataset_topic": row.dataset_topic,
@@ -1027,6 +1580,8 @@ class SessionService:
                 "favorite": bool(row.favorite),
                 "archived": bool(row.archived),
                 "deleted": bool(row.deleted),
+                "pinned": bool(getattr(row, "pinned", False)),
+                "pin_order": getattr(row, "pin_order", None),
                 "message_count": int(row.message_count or 0),
                 "tags": list(row.tags_json or []),
                 "last_query": row.last_query,
@@ -1100,6 +1655,8 @@ class SessionService:
                 "favorite": bool(row.favorite),
                 "archived": bool(row.archived),
                 "deleted": bool(row.deleted),
+                "pinned": bool(getattr(row, "pinned", False)),
+                "pin_order": getattr(row, "pin_order", None),
                 "tags": list(row.tags_json or []),
                 "message_count": int(row.message_count or 0),
                 "chat_history": chat_history,

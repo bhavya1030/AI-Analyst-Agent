@@ -1,9 +1,7 @@
-"""SQLAlchemy models for durable analysis sessions (Phase 1).
+"""SQLAlchemy models for durable analysis sessions.
 
-Tables:
-  - analysis_sessions  → AnalysisSession
-  - session_messages   → SessionMessage
-  - session_artifacts  → SessionArtifact
+Phase 1: AnalysisSession / SessionMessage / SessionArtifact
+Phase 3: pinned, pin_order + list/query indexes
 """
 
 from __future__ import annotations
@@ -71,6 +69,9 @@ class AnalysisSession(Base):
     favorite = Column(Boolean, nullable=False, default=False)
     archived = Column(Boolean, nullable=False, default=False)
     deleted = Column(Boolean, nullable=False, default=False)
+    # Phase 3 — pin to top of lists
+    pinned = Column(Boolean, nullable=False, default=False)
+    pin_order = Column(Integer, nullable=True)
 
     message_count = Column(Integer, nullable=False, default=0)
     tags_json = Column(JSON, nullable=True)
@@ -96,6 +97,13 @@ class AnalysisSession(Base):
         Index("ix_analysis_sessions_user_updated", "user_id", "updated_at"),
         Index("ix_analysis_sessions_user_status", "user_id", "status", "updated_at"),
         Index("ix_analysis_sessions_deleted", "deleted"),
+        # Phase 3 list/filter indexes
+        Index("ix_analysis_sessions_user_favorite", "user_id", "favorite"),
+        Index("ix_analysis_sessions_user_pinned", "user_id", "pinned", "pin_order"),
+        Index("ix_analysis_sessions_user_archived", "user_id", "archived", "updated_at"),
+        Index("ix_analysis_sessions_user_activity", "user_id", "last_activity_at"),
+        Index("ix_analysis_sessions_status_updated", "status", "updated_at"),
+        Index("ix_analysis_sessions_dataset_topic", "dataset_topic"),
     )
 
 

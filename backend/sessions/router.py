@@ -1,14 +1,26 @@
-"""FastAPI routes for session CRUD (Phase 1)."""
+"""FastAPI routes for session management (Phase 1 + Phase 3).
+
+Static paths (/sessions/recent, /sessions/import) are registered before
+path parameters so they are not captured by /sessions/{session_id}.
+"""
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Body, Query
 from fastapi.responses import JSONResponse
 
 from backend.core.logger import get_logger
-from backend.sessions.schemas import SessionCreateRequest, SessionUpdateRequest
+from backend.sessions.schemas import (
+    SessionCreateRequest,
+    SessionDuplicateRequest,
+    SessionFavoriteRequest,
+    SessionImportRequest,
+    SessionPinRequest,
+    SessionRenameRequest,
+    SessionUpdateRequest,
+)
 from backend.sessions.service import SessionNotFoundError, get_session_service
 from backend.utils.json_safe import sanitize_for_json
 
@@ -17,8 +29,30 @@ logger = get_logger(__name__)
 router = APIRouter(tags=["sessions"])
 
 
-@router.post("/sessions")
-@router.post("/v1/sessions")
+def _not_found(session_id: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": f"Session '{session_id}' not found",
+            "code": "SESSION_NOT_FOUND",
+        },
+    )
+
+
+def _server_error(message: str, code: str, details: str | None = None) -> JSONResponse:
+    body: dict = {"error": message, "code": code}
+    if details:
+        body["details"] = details
+    return JSONResponse(status_code=500, content=body)
+
+
+# ---------------------------------------------------------------------------
+# Create / List
+# ---------------------------------------------------------------------------
+
+
+@router.post("/sessions", status_code=201)
+@router.post("/v1/sessions", status_code=201)
 def create_session(body: SessionCreateRequest | None = None):
     body = body or SessionCreateRequest()
     try:
@@ -36,10 +70,7 @@ def create_session(body: SessionCreateRequest | None = None):
         return JSONResponse(status_code=201, content=sanitize_for_json(created))
     except Exception as exc:
         logger.error("Failed to create session", extra={"error": str(exc)})
-        return JSONResponse(
-            status_code=500,
-            content={"error": "Unable to create session", "details": str(exc), "code": "SESSION_CREATE_FAILED"},
-        )
+        return _server_error("Unable to create session", "SESSION_CREATE_FAILED", str(exc))
 
 
 @router.get("/sessions")
@@ -48,18 +79,29 @@ def list_sessions(
     detail: bool = Query(
         False,
         description="If false (default), return string[] of session ids for UI compatibility. "
-        "If true, return {items,total,limit,offset} summaries.",
+        "If true, return paginated SessionListResponse.",
     ),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    sort_by: str = Query(
+        "updated_at",
+        description="updated_at | created_at | last_activity_at | title | message_count | pin_order | status",
+    ),
+    order: str = Query("desc", description="asc | desc"),
     include_archived: bool = Query(True),
     include_deleted: bool = Query(False),
+    status: Optional[str] = Query(None, description="active | archived | deleted"),
+    favorite: Optional[bool] = Query(None),
+    pinned: Optional[bool] = Query(None),
+    archived: Optional[bool] = Query(None),
+    tag: Optional[str] = Query(None),
+    dataset_topic: Optional[str] = Query(None),
+    q: Optional[str] = Query(None, description="Free-text filter on title/query/topic"),
     user_id: Optional[str] = Query(None),
 ):
     try:
         svc = get_session_service()
         if not detail:
-            # Backward compatible with analytics-copilot-ui fetchSessions()
             return svc.list_session_ids(include_deleted=include_deleted)
 
         payload = svc.list_sessions(
@@ -68,14 +110,74 @@ def list_sessions(
             include_archived=include_archived,
             limit=limit,
             offset=offset,
+            sort_by=sort_by,
+            order=order,
+            status=status,
+            favorite=favorite,
+            pinned=pinned,
+            archived=archived,
+            tag=tag,
+            dataset_topic=dataset_topic,
+            q=q,
         )
         return sanitize_for_json(payload)
     except Exception as exc:
         logger.error("Failed to list sessions", extra={"error": str(exc)})
-        return JSONResponse(
-            status_code=500,
-            content={"error": "Unable to retrieve sessions", "code": "SESSION_LIST_FAILED"},
+        return _server_error("Unable to retrieve sessions", "SESSION_LIST_FAILED", str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Static paths (must be before /sessions/{session_id})
+# ---------------------------------------------------------------------------
+
+
+@router.get("/sessions/recent")
+@router.get("/v1/sessions/recent")
+def recent_sessions(
+    limit: int = Query(10, ge=1, le=100),
+    include_archived: bool = Query(False),
+    user_id: Optional[str] = Query(None),
+):
+    try:
+        svc = get_session_service()
+        payload = svc.recent_sessions(
+            user_id=user_id,
+            limit=limit,
+            include_archived=include_archived,
         )
+        return sanitize_for_json(payload)
+    except Exception as exc:
+        logger.error("Failed to load recent sessions", extra={"error": str(exc)})
+        return _server_error(
+            "Unable to retrieve recent sessions", "SESSION_RECENT_FAILED", str(exc)
+        )
+
+
+@router.post("/sessions/import", status_code=201)
+@router.post("/v1/sessions/import", status_code=201)
+def import_session(body: SessionImportRequest):
+    try:
+        svc = get_session_service()
+        result = svc.import_session(
+            body.bundle,
+            session_id=body.session_id,
+            title=body.title,
+            user_id=body.user_id or "anonymous",
+        )
+        return JSONResponse(status_code=201, content=sanitize_for_json(result))
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"error": str(exc), "code": "SESSION_IMPORT_INVALID"},
+        )
+    except Exception as exc:
+        logger.error("Failed to import session", extra={"error": str(exc)})
+        return _server_error("Unable to import session", "SESSION_IMPORT_FAILED", str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Single session CRUD
+# ---------------------------------------------------------------------------
 
 
 @router.get("/sessions/{session_id}")
@@ -86,22 +188,13 @@ def get_session(session_id: str):
         detail = svc.get_session_detail(session_id)
         return sanitize_for_json(detail)
     except SessionNotFoundError:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "error": f"Session '{session_id}' not found",
-                "code": "SESSION_NOT_FOUND",
-            },
-        )
+        return _not_found(session_id)
     except Exception as exc:
         logger.error(
             "Failed to load session detail",
             extra={"session_id": session_id, "error": str(exc)},
         )
-        return JSONResponse(
-            status_code=500,
-            content={"error": "Unable to retrieve session", "code": "SESSION_GET_FAILED"},
-        )
+        return _server_error("Unable to retrieve session", "SESSION_GET_FAILED", str(exc))
 
 
 @router.put("/sessions/{session_id}")
@@ -119,26 +212,18 @@ def update_session(session_id: str, body: SessionUpdateRequest):
             dataset_topic=body.dataset_topic,
             tags=body.tags,
             favorite=body.favorite,
+            pinned=body.pinned,
             status=body.status,
         )
         return sanitize_for_json(updated)
     except SessionNotFoundError:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "error": f"Session '{session_id}' not found",
-                "code": "SESSION_NOT_FOUND",
-            },
-        )
+        return _not_found(session_id)
     except Exception as exc:
         logger.error(
             "Failed to update session",
             extra={"session_id": session_id, "error": str(exc)},
         )
-        return JSONResponse(
-            status_code=500,
-            content={"error": "Unable to update session", "details": str(exc), "code": "SESSION_UPDATE_FAILED"},
-        )
+        return _server_error("Unable to update session", "SESSION_UPDATE_FAILED", str(exc))
 
 
 @router.delete("/sessions/{session_id}")
@@ -152,19 +237,164 @@ def delete_session(
         result = svc.delete_session(session_id, hard=hard)
         return sanitize_for_json(result)
     except SessionNotFoundError:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "error": f"Session '{session_id}' not found",
-                "code": "SESSION_NOT_FOUND",
-            },
-        )
+        return _not_found(session_id)
     except Exception as exc:
         logger.error(
             "Failed to delete session",
             extra={"session_id": session_id, "error": str(exc)},
         )
+        return _server_error("Unable to delete session", "SESSION_DELETE_FAILED", str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 actions
+# ---------------------------------------------------------------------------
+
+
+@router.post("/sessions/{session_id}/rename")
+@router.post("/v1/sessions/{session_id}/rename")
+def rename_session(session_id: str, body: SessionRenameRequest):
+    try:
+        svc = get_session_service()
+        result = svc.rename_session(session_id, body.title)
+        return sanitize_for_json(result)
+    except ValueError as exc:
         return JSONResponse(
-            status_code=500,
-            content={"error": "Unable to delete session", "details": str(exc), "code": "SESSION_DELETE_FAILED"},
+            status_code=400,
+            content={"error": str(exc), "code": "SESSION_RENAME_INVALID"},
         )
+    except SessionNotFoundError:
+        return _not_found(session_id)
+    except Exception as exc:
+        logger.error(
+            "Failed to rename session",
+            extra={"session_id": session_id, "error": str(exc)},
+        )
+        return _server_error("Unable to rename session", "SESSION_RENAME_FAILED", str(exc))
+
+
+@router.post("/sessions/{session_id}/archive")
+@router.post("/v1/sessions/{session_id}/archive")
+def archive_session(session_id: str):
+    try:
+        svc = get_session_service()
+        result = svc.archive_session(session_id)
+        return sanitize_for_json(result)
+    except SessionNotFoundError:
+        return _not_found(session_id)
+    except Exception as exc:
+        logger.error(
+            "Failed to archive session",
+            extra={"session_id": session_id, "error": str(exc)},
+        )
+        return _server_error("Unable to archive session", "SESSION_ARCHIVE_FAILED", str(exc))
+
+
+@router.post("/sessions/{session_id}/restore")
+@router.post("/v1/sessions/{session_id}/restore")
+def restore_session(session_id: str):
+    try:
+        svc = get_session_service()
+        result = svc.restore_session(session_id)
+        return sanitize_for_json(result)
+    except SessionNotFoundError:
+        return _not_found(session_id)
+    except Exception as exc:
+        logger.error(
+            "Failed to restore session",
+            extra={"session_id": session_id, "error": str(exc)},
+        )
+        return _server_error("Unable to restore session", "SESSION_RESTORE_FAILED", str(exc))
+
+
+@router.post("/sessions/{session_id}/favorite")
+@router.post("/v1/sessions/{session_id}/favorite")
+def favorite_session(
+    session_id: str,
+    body: SessionFavoriteRequest | None = Body(default=None),
+):
+    body = body or SessionFavoriteRequest()
+    try:
+        svc = get_session_service()
+        result = svc.set_favorite(session_id, body.favorite)
+        return sanitize_for_json(result)
+    except SessionNotFoundError:
+        return _not_found(session_id)
+    except Exception as exc:
+        logger.error(
+            "Failed to favorite session",
+            extra={"session_id": session_id, "error": str(exc)},
+        )
+        return _server_error(
+            "Unable to update favorite", "SESSION_FAVORITE_FAILED", str(exc)
+        )
+
+
+@router.post("/sessions/{session_id}/pin")
+@router.post("/v1/sessions/{session_id}/pin")
+def pin_session(
+    session_id: str,
+    body: SessionPinRequest | None = Body(default=None),
+):
+    body = body or SessionPinRequest()
+    try:
+        svc = get_session_service()
+        result = svc.set_pinned(
+            session_id,
+            body.pinned,
+            pin_order=body.pin_order,
+        )
+        return sanitize_for_json(result)
+    except SessionNotFoundError:
+        return _not_found(session_id)
+    except Exception as exc:
+        logger.error(
+            "Failed to pin session",
+            extra={"session_id": session_id, "error": str(exc)},
+        )
+        return _server_error("Unable to pin session", "SESSION_PIN_FAILED", str(exc))
+
+
+@router.post("/sessions/{session_id}/duplicate", status_code=201)
+@router.post("/v1/sessions/{session_id}/duplicate", status_code=201)
+def duplicate_session(
+    session_id: str,
+    body: SessionDuplicateRequest | None = Body(default=None),
+):
+    body = body or SessionDuplicateRequest()
+    try:
+        svc = get_session_service()
+        result = svc.duplicate_session(
+            session_id,
+            title=body.title,
+            include_messages=body.include_messages,
+            include_artifacts=body.include_artifacts,
+        )
+        return JSONResponse(status_code=201, content=sanitize_for_json(result))
+    except SessionNotFoundError:
+        return _not_found(session_id)
+    except Exception as exc:
+        logger.error(
+            "Failed to duplicate session",
+            extra={"session_id": session_id, "error": str(exc)},
+        )
+        return _server_error(
+            "Unable to duplicate session", "SESSION_DUPLICATE_FAILED", str(exc)
+        )
+
+
+@router.get("/sessions/{session_id}/export")
+@router.get("/v1/sessions/{session_id}/export")
+def export_session(session_id: str):
+    try:
+        svc = get_session_service()
+        bundle = svc.export_session(session_id)
+        return sanitize_for_json(bundle)
+    except SessionNotFoundError:
+        return _not_found(session_id)
+    except Exception as exc:
+        logger.error(
+            "Failed to export session",
+            extra={"session_id": session_id, "error": str(exc)},
+        )
+        return _server_error("Unable to export session", "SESSION_EXPORT_FAILED", str(exc))
