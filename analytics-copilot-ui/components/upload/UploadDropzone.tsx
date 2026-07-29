@@ -5,7 +5,6 @@ import { useDropzone } from "react-dropzone";
 import { FileSpreadsheet, Loader2, Upload, X } from "lucide-react";
 import { uploadDataset } from "@/services/api";
 import { useChatStore } from "@/store/chatStore";
-import { saveSessionState } from "@/utils/localStorage";
 
 export default function UploadDropzone() {
   const [error, setError] = useState<string | null>(null);
@@ -16,6 +15,7 @@ export default function UploadDropzone() {
   const datasetName = useChatStore((state) => state.datasetName);
   const filePath = useChatStore((state) => state.filePath);
   const addMessage = useChatStore((state) => state.addMessage);
+  const ensureServerSession = useChatStore((state) => state.ensureServerSession);
 
   const onDrop = useCallback(
     async (acceptedFiles: File[]) => {
@@ -37,8 +37,7 @@ export default function UploadDropzone() {
         const result = await uploadDataset(file);
         setDatasetName(file.name);
         setFilePath(result.file_path);
-        saveSessionState("analytics-copilot-dataset", file.name);
-        saveSessionState("analytics-copilot-filepath", result.file_path);
+        await ensureServerSession(file.name);
         addMessage({
           id: `system-upload-${Date.now()}`,
           role: "assistant",
@@ -51,7 +50,7 @@ export default function UploadDropzone() {
         setUploading(false);
       }
     },
-    [addMessage, setDatasetName, setFilePath]
+    [addMessage, ensureServerSession, setDatasetName, setFilePath]
   );
 
   const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
@@ -68,57 +67,53 @@ export default function UploadDropzone() {
   return (
     <section
       {...getRootProps()}
-      className={`rounded-2xl border border-dashed px-3 py-2.5 transition ${
+      className={`rounded-xl border border-dashed px-2.5 py-2 transition ${
         isDragActive
-          ? "border-blue-400 bg-blue-50/70"
+          ? "border-accent bg-accent-soft/60"
           : filePath
-            ? "border-emerald-200 bg-emerald-50/40"
-            : "border-slate-200 bg-slate-50/50"
+            ? "border-success/40 bg-success-soft/40"
+            : "border-border bg-surface-muted/50"
       }`}
     >
       <input {...getInputProps()} />
-      <div className="flex flex-wrap items-center justify-between gap-2.5">
-        <div className="flex min-w-0 items-center gap-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <div
-            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
+            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
               isDragActive
-                ? "bg-blue-100 text-blue-700"
+                ? "bg-accent-soft text-accent"
                 : filePath
-                  ? "bg-emerald-100 text-emerald-700"
-                  : "bg-white text-slate-500 shadow-soft ring-1 ring-slate-100"
+                  ? "bg-success-soft text-success"
+                  : "bg-surface text-muted-foreground shadow-soft ring-1 ring-border"
             }`}
           >
-            {uploading ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />}
+            {uploading ? <Loader2 className="animate-spin" size={14} /> : <Upload size={14} />}
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-semibold text-slate-800">
+            <p className="text-[11px] font-semibold text-foreground">
               {isDragActive
                 ? "Drop to upload"
                 : datasetName
                   ? "Dataset loaded"
-                  : "Upload dataset (optional)"}
+                  : "Upload dataset"}
             </p>
-            <p className="truncate text-[11px] text-slate-500">
-              {datasetName
-                ? datasetName
-                : "CSV / Excel — or skip and ask for open data"}
+            <p className="truncate text-[10px] text-muted-foreground">
+              {datasetName || "CSV / Excel — optional"}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1">
           {filePath ? (
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 clearDataset();
-                saveSessionState("analytics-copilot-dataset", "");
-                saveSessionState("analytics-copilot-filepath", "");
               }}
-              className="btn-secondary !py-1.5"
+              className="btn-secondary !px-2 !py-1"
             >
-              <X size={13} /> Clear
+              <X size={12} /> Clear
             </button>
           ) : null}
           <button
@@ -128,14 +123,14 @@ export default function UploadDropzone() {
               open();
             }}
             disabled={uploading}
-            className="btn-secondary !py-1.5 disabled:opacity-50"
+            className="btn-secondary !px-2 !py-1 disabled:opacity-50"
           >
-            <FileSpreadsheet size={13} />
-            {uploading ? "Uploading…" : "Browse"}
+            <FileSpreadsheet size={12} />
+            {uploading ? "…" : "Browse"}
           </button>
         </div>
       </div>
-      {error ? <p className="mt-1.5 text-[11px] font-medium text-red-500">{error}</p> : null}
+      {error ? <p className="mt-1 text-[10px] font-medium text-danger">{error}</p> : null}
     </section>
   );
 }

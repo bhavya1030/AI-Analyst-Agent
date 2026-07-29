@@ -75,6 +75,46 @@ def ensure_session_memory_schema():
 
 ensure_session_memory_schema()
 
+
+def ensure_analysis_session_schema():
+    """Create Phase-1 session tables (analysis_sessions, messages, artifacts)."""
+    try:
+        from backend.sessions.service import ensure_session_tables
+
+        ensure_session_tables()
+    except Exception:
+        # Avoid import cycles / partial installs breaking legacy paths
+        pass
+
+
+ensure_analysis_session_schema()
+
+
+def ensure_analysis_cache_schema():
+    """Create Phase-2 durable AnalysisCache table."""
+    try:
+        from backend.cache.analysis_cache import ensure_analysis_cache_table
+
+        ensure_analysis_cache_table()
+    except Exception:
+        pass
+
+
+ensure_analysis_cache_schema()
+
+
+def ensure_auth_users_schema():
+    """Create Phase-8 users table + anonymous seed."""
+    try:
+        from backend.auth.service import ensure_auth_schema
+
+        ensure_auth_schema()
+    except Exception:
+        pass
+
+
+ensure_auth_users_schema()
+
 _UNSET = object()
 
 

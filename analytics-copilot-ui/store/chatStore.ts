@@ -1,6 +1,18 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { loadSessionState } from "@/utils/localStorage";
+import {
+  archiveSession as apiArchiveSession,
+  createSession as apiCreateSession,
+  deleteSession as apiDeleteSession,
+  duplicateSession as apiDuplicateSession,
+  favoriteSession as apiFavoriteSession,
+  fetchSessionDetail,
+  fetchSessions,
+  renameSession as apiRenameSession,
+  restoreSession as apiRestoreSession,
+  updateSession as apiUpdateSession,
+} from "@/services/api";
+import { snapshotFromSessionDetail } from "@/utils/sessionRestore";
 import {
   ChatMessage,
   ForecastResult,
@@ -8,10 +20,13 @@ import {
   SessionDetail,
   SessionSnapshot,
   SessionState,
+  SessionSummary,
 } from "@/types";
 
 interface ChatStore extends SessionState {
   loading: boolean;
+  remoteSessionList: SessionSummary[];
+  sessionsLoading: boolean;
   addMessage: (message: ChatMessage) => void;
   setForecast: (forecast: ForecastResult | null) => void;
   setDatasetName: (name: string) => void;
@@ -24,13 +39,38 @@ interface ChatStore extends SessionState {
   resetConversation: (options?: { keepDataset?: boolean }) => void;
   setLoading: (value: boolean) => void;
   clearDataset: () => void;
-  /** Persist the active chat into sessionsById */
+  /** Snapshot active UI state (ephemeral only) */
   saveCurrentSession: () => void;
-  /** Open a session in the center Analyze chat block */
-  openSession: (sessionId: string, options?: { focusMessageId?: string; detail?: SessionDetail | null }) => void;
-  /** Apply a backend session detail when no local snapshot exists */
+  /** Apply backend detail as active session (full restore) */
   hydrateFromSessionDetail: (detail: SessionDetail) => void;
-  startNewChat: () => void;
+  /** Open session: prefer backend detail, fall back to empty */
+  openSession: (
+    sessionId: string,
+    options?: { focusMessageId?: string; detail?: SessionDetail | null }
+  ) => void;
+  /** Fetch full detail from backend and restore chat/charts/analysis/dataset */
+  openSessionFromBackend: (
+    sessionId: string,
+    options?: { focusMessageId?: string }
+  ) => Promise<boolean>;
+  /** Rehydrate the active sessionId from the backend (page reload) */
+  rehydrateActiveSession: () => Promise<void>;
+  /** Load session list from backend */
+  refreshRemoteSessions: (options?: {
+    q?: string;
+    includeArchived?: boolean;
+  }) => Promise<SessionSummary[]>;
+  /** Create server session + clear chat */
+  startNewChat: () => Promise<void>;
+  /** Ensure current session exists on server */
+  ensureServerSession: (title?: string) => Promise<string>;
+  /** Lifecycle actions (backend) */
+  renameRemoteSession: (sessionId: string, title: string) => Promise<boolean>;
+  deleteRemoteSession: (sessionId: string, hard?: boolean) => Promise<boolean>;
+  archiveRemoteSession: (sessionId: string) => Promise<boolean>;
+  restoreRemoteSession: (sessionId: string) => Promise<boolean>;
+  favoriteRemoteSession: (sessionId: string, favorite?: boolean) => Promise<boolean>;
+  duplicateRemoteSession: (sessionId: string, title?: string) => Promise<SessionSummary | null>;
 }
 
 function emptySnapshot(sessionId: string): SessionSnapshot {
@@ -81,17 +121,31 @@ function applySnapshot(snapshot: SessionSnapshot) {
     hypotheses: snapshot.hypotheses?.length
       ? snapshot.hypotheses
       : lastAssistant?.hypotheses || [],
-    activeAssistantId:
-      snapshot.activeAssistantId || lastAssistant?.id || null,
+    activeAssistantId: snapshot.activeAssistantId || lastAssistant?.id || null,
   };
+}
+
+function patchRemoteList(
+  list: SessionSummary[],
+  sessionId: string,
+  patch: Partial<SessionSummary> | null
+): SessionSummary[] {
+  if (patch === null) {
+    return list.filter((s) => s.session_id !== sessionId);
+  }
+  const idx = list.findIndex((s) => s.session_id === sessionId);
+  if (idx < 0) return list;
+  const next = [...list];
+  next[idx] = { ...next[idx], ...patch };
+  return next;
 }
 
 export const useChatStore = create<ChatStore>()(
   persist(
     (set, get) => ({
       sessionId: `session-${Date.now()}`,
-      datasetName: loadSessionState("analytics-copilot-dataset", ""),
-      filePath: loadSessionState("analytics-copilot-filepath", ""),
+      datasetName: "",
+      filePath: "",
       messages: [],
       charts: [],
       forecast: null,
@@ -100,7 +154,9 @@ export const useChatStore = create<ChatStore>()(
       history: [],
       activeAssistantId: null,
       sessionsById: {},
+      remoteSessionList: [],
       loading: false,
+      sessionsLoading: false,
 
       addMessage: (message) => {
         const state = get();
@@ -125,10 +181,13 @@ export const useChatStore = create<ChatStore>()(
             datasetName: state.datasetName || undefined,
             messageId: message.id,
           };
-          patch.history = [entry, ...state.history.filter((h) => h.id !== entry.id)].slice(0, 50);
+          patch.history = [entry, ...state.history.filter((h) => h.id !== entry.id)].slice(
+            0,
+            50
+          );
         }
 
-        // Keep per-session snapshot in sync so history reopen works.
+        // Ephemeral UI cache only — durable history lives on the backend
         const nextState = { ...state, ...patch } as SessionState;
         const snap = snapshotFromState(nextState);
         patch.sessionsById = {
@@ -147,7 +206,9 @@ export const useChatStore = create<ChatStore>()(
       setSessionId: (sessionId) => set({ sessionId }),
       setActiveAssistantId: (id) => set({ activeAssistantId: id }),
       addHistoryEntry: (entry) =>
-        set({ history: [entry, ...get().history.filter((h) => h.id !== entry.id)].slice(0, 50) }),
+        set({
+          history: [entry, ...get().history.filter((h) => h.id !== entry.id)].slice(0, 50),
+        }),
 
       saveCurrentSession: () => {
         const state = get();
@@ -160,18 +221,25 @@ export const useChatStore = create<ChatStore>()(
         });
       },
 
+      hydrateFromSessionDetail: (detail) => {
+        const snap = snapshotFromSessionDetail(detail);
+        const state = get();
+        set({
+          sessionsById: { ...state.sessionsById, [snap.sessionId]: snap },
+          ...applySnapshot(snap),
+        });
+      },
+
       openSession: (sessionId, options) => {
         const state = get();
         if (!sessionId) return;
 
-        // Always snapshot the chat we are leaving.
         const leaving = snapshotFromState(state);
         const sessionsById = {
           ...(state.sessionsById || {}),
           [state.sessionId]: leaving,
         };
 
-        // Already on this session — just focus a message if requested.
         if (sessionId === state.sessionId) {
           if (options?.focusMessageId) {
             const assistant = state.messages.find(
@@ -189,43 +257,30 @@ export const useChatStore = create<ChatStore>()(
           return;
         }
 
+        // Prefer full backend detail when provided
+        if (options?.detail) {
+          const snap = snapshotFromSessionDetail(options.detail);
+          set({
+            sessionsById: { ...sessionsById, [sessionId]: snap },
+            ...applySnapshot(snap),
+          });
+          if (options?.focusMessageId) {
+            const msgs = snap.messages;
+            const assistant = msgs.find(
+              (m, idx) =>
+                m.role === "assistant" && msgs[idx - 1]?.id === options.focusMessageId
+            );
+            if (assistant) set({ activeAssistantId: assistant.id });
+          }
+          return;
+        }
+
+        // Ephemeral cache only if we already hydrated from backend this session
         const cached = sessionsById[sessionId];
         if (cached && cached.messages?.length) {
           set({
             sessionsById,
             ...applySnapshot(cached),
-          });
-          if (options?.focusMessageId) {
-            const msgs = cached.messages;
-            const assistant = msgs.find(
-              (m, idx) =>
-                m.role === "assistant" && msgs[idx - 1]?.id === options.focusMessageId
-            );
-            if (assistant) {
-              set({ activeAssistantId: assistant.id });
-            }
-          }
-          return;
-        }
-
-        // No local cache — open empty shell; caller may hydrate from API.
-        if (options?.detail) {
-          const hydrated = messagesFromDetail(options.detail);
-          const snap: SessionSnapshot = {
-            sessionId,
-            datasetName: options.detail.dataset_topic || "",
-            filePath: options.detail.dataset_path || "",
-            messages: hydrated,
-            charts: [],
-            forecast: null,
-            suggestions: [],
-            hypotheses: [],
-            activeAssistantId: hydrated.find((m) => m.role === "assistant")?.id || null,
-            updatedAt: Date.now(),
-          };
-          set({
-            sessionsById: { ...sessionsById, [sessionId]: snap },
-            ...applySnapshot(snap),
           });
           return;
         }
@@ -236,60 +291,105 @@ export const useChatStore = create<ChatStore>()(
             [sessionId]: sessionsById[sessionId] || emptySnapshot(sessionId),
           },
           sessionId,
-          datasetName: sessionsById[sessionId]?.datasetName || "",
-          filePath: sessionsById[sessionId]?.filePath || "",
-          messages: sessionsById[sessionId]?.messages || [],
-          charts: sessionsById[sessionId]?.charts || [],
-          forecast: sessionsById[sessionId]?.forecast || null,
-          suggestions: sessionsById[sessionId]?.suggestions || [],
-          hypotheses: sessionsById[sessionId]?.hypotheses || [],
-          activeAssistantId: sessionsById[sessionId]?.activeAssistantId || null,
+          datasetName: "",
+          filePath: "",
+          messages: [],
+          charts: [],
+          forecast: null,
+          suggestions: [],
+          hypotheses: [],
+          activeAssistantId: null,
         });
       },
 
-      hydrateFromSessionDetail: (detail) => {
+      openSessionFromBackend: async (sessionId, options) => {
+        if (!sessionId) return false;
         const state = get();
-        const sessionId = detail.session_id;
-        const existing = state.sessionsById[sessionId];
-        // Prefer richer local cache if it already has a multi-turn chat.
-        if (existing && existing.messages.length > 1) {
-          set({
-            ...applySnapshot(existing),
-            sessionsById: state.sessionsById,
-          });
-          return;
+        get().saveCurrentSession();
+
+        if (sessionId === state.sessionId && state.messages.length > 0 && !options?.focusMessageId) {
+          // Already active with content — still refresh from server for consistency
         }
 
-        const messages = messagesFromDetail(detail);
-        const snap: SessionSnapshot = {
-          sessionId,
-          datasetName: detail.dataset_topic || existing?.datasetName || "",
-          filePath: detail.dataset_path || existing?.filePath || "",
-          messages: existing?.messages?.length ? existing.messages : messages,
-          charts: existing?.charts || [],
-          forecast: existing?.forecast || null,
-          suggestions: existing?.suggestions || [],
-          hypotheses: existing?.hypotheses || [],
-          activeAssistantId:
-            existing?.activeAssistantId ||
-            messages.find((m) => m.role === "assistant")?.id ||
-            null,
-          updatedAt: Date.now(),
-        };
+        const detail = await fetchSessionDetail(sessionId);
+        if (detail) {
+          get().openSession(sessionId, {
+            focusMessageId: options?.focusMessageId,
+            detail,
+          });
+          return true;
+        }
 
-        set({
-          sessionsById: { ...state.sessionsById, [sessionId]: snap },
-          ...applySnapshot(snap),
-        });
+        get().openSession(sessionId, { focusMessageId: options?.focusMessageId });
+        return false;
       },
 
-      startNewChat: () => {
+      rehydrateActiveSession: async () => {
+        const { sessionId } = get();
+        if (!sessionId) return;
+        const detail = await fetchSessionDetail(sessionId);
+        if (detail) {
+          get().hydrateFromSessionDetail(detail);
+        }
+      },
+
+      refreshRemoteSessions: async (options) => {
+        set({ sessionsLoading: true });
+        try {
+          const items = await fetchSessions({
+            limit: 100,
+            includeArchived: options?.includeArchived ?? true,
+            q: options?.q,
+          });
+          set({ remoteSessionList: items });
+          return items;
+        } finally {
+          set({ sessionsLoading: false });
+        }
+      },
+
+      ensureServerSession: async (title?: string) => {
+        const state = get();
+        const created = await apiCreateSession({
+          session_id: state.sessionId,
+          title: title || "New analysis",
+          dataset_name: state.datasetName || undefined,
+          dataset_path: state.filePath || undefined,
+        });
+        const sid = created?.session_id || state.sessionId;
+        if (created?.session_id) {
+          set({ sessionId: created.session_id });
+        }
+        // Idempotent create does not re-bind dataset — patch if we have one
+        if (state.datasetName || state.filePath) {
+          await apiUpdateSession(sid, {
+            dataset_name: state.datasetName || undefined,
+            dataset_path: state.filePath || undefined,
+            dataset_topic: state.datasetName || undefined,
+            title:
+              title && title !== "New analysis"
+                ? title
+                : undefined,
+          });
+        }
+        void get().refreshRemoteSessions();
+        return sid;
+      },
+
+      startNewChat: async () => {
         const state = get();
         const sessionsById = {
           ...state.sessionsById,
           [state.sessionId]: snapshotFromState(state),
         };
-        const newId = `session-${Date.now()}`;
+
+        const created = await apiCreateSession({
+          title: "New analysis",
+          dataset_name: state.datasetName || undefined,
+          dataset_path: state.filePath || undefined,
+        });
+        const newId = created?.session_id || `session-${Date.now()}`;
+
         set({
           sessionsById: {
             ...sessionsById,
@@ -303,10 +403,79 @@ export const useChatStore = create<ChatStore>()(
           hypotheses: [],
           activeAssistantId: null,
           loading: false,
-          // Keep dataset for convenience unless user clears it
           datasetName: state.datasetName,
           filePath: state.filePath,
         });
+
+        void get().refreshRemoteSessions();
+      },
+
+      renameRemoteSession: async (sessionId, title) => {
+        const result = await apiRenameSession(sessionId, title);
+        if (!result) return false;
+        set({
+          remoteSessionList: patchRemoteList(get().remoteSessionList, sessionId, {
+            title: result.title || title,
+          }),
+        });
+        return true;
+      },
+
+      deleteRemoteSession: async (sessionId, hard = false) => {
+        const ok = await apiDeleteSession(sessionId, hard);
+        if (!ok) return false;
+        set({
+          remoteSessionList: patchRemoteList(get().remoteSessionList, sessionId, null),
+        });
+        const state = get();
+        if (state.sessionId === sessionId) {
+          await get().startNewChat();
+        }
+        return true;
+      },
+
+      archiveRemoteSession: async (sessionId) => {
+        const result = await apiArchiveSession(sessionId);
+        if (!result) return false;
+        set({
+          remoteSessionList: patchRemoteList(get().remoteSessionList, sessionId, {
+            archived: true,
+            status: "archived",
+          }),
+        });
+        return true;
+      },
+
+      restoreRemoteSession: async (sessionId) => {
+        const result = await apiRestoreSession(sessionId);
+        if (!result) return false;
+        set({
+          remoteSessionList: patchRemoteList(get().remoteSessionList, sessionId, {
+            archived: false,
+            status: "active",
+            deleted: false,
+          }),
+        });
+        return true;
+      },
+
+      favoriteRemoteSession: async (sessionId, favorite = true) => {
+        const result = await apiFavoriteSession(sessionId, favorite);
+        if (!result) return false;
+        set({
+          remoteSessionList: patchRemoteList(get().remoteSessionList, sessionId, {
+            favorite: result.favorite ?? favorite,
+          }),
+        });
+        return true;
+      },
+
+      duplicateRemoteSession: async (sessionId, title) => {
+        const result = await apiDuplicateSession(sessionId, title);
+        if (result) {
+          await get().refreshRemoteSessions();
+        }
+        return result;
       },
 
       resetConversation: (options) =>
@@ -343,53 +512,12 @@ export const useChatStore = create<ChatStore>()(
     }),
     {
       name: "analytics-copilot-session",
+      // Backend is source of truth for chat history — only keep active session identity
       partialize: (state) => ({
         sessionId: state.sessionId,
         datasetName: state.datasetName,
         filePath: state.filePath,
-        messages: state.messages,
-        charts: state.charts,
-        forecast: state.forecast,
-        suggestions: state.suggestions,
-        hypotheses: state.hypotheses,
-        history: state.history,
-        activeAssistantId: state.activeAssistantId,
-        sessionsById: state.sessionsById,
       }),
     }
   )
 );
-
-function messagesFromDetail(detail: SessionDetail): ChatMessage[] {
-  const messages: ChatMessage[] = [];
-  const ts = Date.now();
-  if (detail.last_query) {
-    messages.push({
-      id: `restored-user-${detail.session_id}`,
-      role: "user",
-      text: detail.last_query,
-      timestamp: ts - 1000,
-    });
-  }
-  if (detail.last_insight) {
-    messages.push({
-      id: `restored-assistant-${detail.session_id}`,
-      role: "assistant",
-      text: detail.last_insight,
-      timestamp: ts,
-    });
-  }
-  if (!messages.length) {
-    messages.push({
-      id: `restored-empty-${detail.session_id}`,
-      role: "assistant",
-      text: `Opened session “${detail.session_id}”. ${
-        detail.dataset_topic
-          ? `Active topic: ${detail.dataset_topic}. `
-          : ""
-      }Ask a follow-up in the chat to continue analysis.`,
-      timestamp: ts,
-    });
-  }
-  return messages;
-}

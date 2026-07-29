@@ -49,3 +49,21 @@ class AnalystState(TypedDict, total=False):
     dataset_intelligence: dict[str, Any]
     learning_result: dict[str, Any]
     session_dataset_topic: Optional[str]
+    # Phase 5 — hierarchical memory (injected each request)
+    session_id: Optional[str]
+    user_id: Optional[str]
+    dataset_fingerprint: Optional[str]
+    memory: dict[str, Any]
+    conversation_memory: dict[str, Any]
+    session_memory: dict[str, Any]
+    dataset_memory: dict[str, Any]
+    knowledge_memory: dict[str, Any]
+    memory_hierarchy_loaded: bool
+    recent_messages: list
+    conversation_summary: Optional[str]
+    preferred_columns: list[str]
+    preferred_chart_types: list[str]
+    prior_dataset_insights: list[str]
+    dataset_memory_key: Optional[str]
+    dataset_prior_analysis_count: int
+    knowledge_topic_hint: Optional[str]
