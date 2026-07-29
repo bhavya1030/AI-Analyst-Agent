@@ -4,10 +4,13 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from backend.auth.context import AuthUser
+from backend.auth.deps import get_current_user
+from backend.auth.service import ensure_auth_schema
 from backend.config import settings
 from backend.core.logger import get_logger
 from backend.db import get_session, save_session
@@ -15,7 +18,7 @@ from backend.graph.checkpoint_service import get_checkpoint_service
 from backend.graph.workflow import build_graph
 from backend.memory.hierarchy import get_memory_hierarchy
 from backend.sessions.router import router as sessions_router
-from backend.sessions.service import get_session_service
+from backend.sessions.service import SessionAccessDenied, get_session_service
 from backend.startup.ollama_validator import get_ollama_status, validate_model_inference
 from backend.utils.dataset_loader import load_dataset
 from backend.utils.json_safe import sanitize_for_json
@@ -33,6 +36,11 @@ app.add_middleware(
 app.include_router(sessions_router)
 graph = build_graph()
 logger = get_logger(__name__)
+
+try:
+    ensure_auth_schema()
+except Exception as _auth_exc:
+    logger.warning("Auth schema init deferred", extra={"error": str(_auth_exc)})
 
 
 def _graph_config(session_id: str) -> dict:
@@ -463,11 +471,24 @@ def upload_dataset(file: UploadFile = File(...)):
 
 
 @app.get("/analyze")
-def analyze(session_id: str = "default"):
+def analyze(
+    session_id: str = "default",
+    user: AuthUser = Depends(get_current_user),
+):
     session_svc = get_session_service()
     memory_svc = get_memory_hierarchy()
+    user_id = user.user_id
     try:
-        session_svc.ensure_session(session_id)
+        session_svc.ensure_session(session_id, user_id=user_id)
+    except SessionAccessDenied:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": f"Access denied to session '{session_id}'",
+                "code": "SESSION_ACCESS_DENIED",
+                "user_id": user_id,
+            },
+        )
     except Exception as exc:
         logger.warning(
             "Session ensure failed on analyze",
@@ -477,12 +498,14 @@ def analyze(session_id: str = "default"):
     session = get_session(session_id)
     state = _build_state(session=session, question="analyze dataset")
     state["session_id"] = session_id
+    state["user_id"] = user_id
 
     # Phase 5: load → inject memory hierarchy before graph
     memory_bundle = None
     try:
         memory_bundle = memory_svc.load(
             session_id,
+            user_id=user_id,
             dataset_topic=getattr(session, "dataset_topic", None) if session else None,
             dataset_url=getattr(session, "dataset_url", None) if session else None,
             dataset_path=getattr(session, "dataset_path", None) if session else None,
@@ -511,11 +534,14 @@ def analyze(session_id: str = "default"):
 
         # Phase 1: durable session turn + legacy dual-write
         try:
-            session_svc.append_user_message(session_id, "analyze dataset")
+            session_svc.append_user_message(
+                session_id, "analyze dataset", user_id=user_id
+            )
             session_svc.record_assistant_turn(
                 session_id,
                 question="analyze dataset",
                 result=result,
+                user_id=user_id,
             )
         except Exception as persist_exc:
             logger.warning(
@@ -537,6 +563,7 @@ def analyze(session_id: str = "default"):
             memory_svc.persist(
                 session_id,
                 result,
+                user_id=user_id,
                 question="analyze dataset",
                 prior=memory_bundle,
             )
@@ -549,9 +576,11 @@ def analyze(session_id: str = "default"):
         # Phase 6: durable turn checkpoint (graph + planner, no DataFrames)
         ckpt = _save_turn_checkpoint(session_id, result)
         response = _stable_response(result)
-        if isinstance(response, dict) and ckpt:
-            response["checkpoint_id"] = ckpt.get("checkpoint_id")
-            response["checkpoint_saved"] = True
+        if isinstance(response, dict):
+            response["user_id"] = user_id
+            if ckpt:
+                response["checkpoint_id"] = ckpt.get("checkpoint_id")
+                response["checkpoint_saved"] = True
         return response
     except Exception as exc:
         logger.error(
@@ -573,15 +602,26 @@ def ask(
     question: str,
     session_id: str = "default",
     file_path: str | None = None,
+    user: AuthUser = Depends(get_current_user),
 ):
     session_svc = get_session_service()
     memory_svc = get_memory_hierarchy()
+    user_id = user.user_id
     normalized_file_path = _normalize_dataset_reference(file_path)
 
     # Phase 1: ensure durable session + append user message before the graph run
     try:
-        session_svc.ensure_session(session_id)
-        session_svc.append_user_message(session_id, question)
+        session_svc.ensure_session(session_id, user_id=user_id)
+        session_svc.append_user_message(session_id, question, user_id=user_id)
+    except SessionAccessDenied:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": f"Access denied to session '{session_id}'",
+                "code": "SESSION_ACCESS_DENIED",
+                "user_id": user_id,
+            },
+        )
     except Exception as exc:
         logger.warning(
             "Session user-message persist failed; continuing ask",
@@ -595,6 +635,7 @@ def ask(
         file_path=normalized_file_path,
     )
     state["session_id"] = session_id
+    state["user_id"] = user_id
 
     if normalized_file_path:
         state["file_path"] = normalized_file_path
@@ -604,6 +645,7 @@ def ask(
     try:
         memory_bundle = memory_svc.load(
             session_id,
+            user_id=user_id,
             question=question,
             dataset_topic=getattr(session, "dataset_topic", None) if session else None,
             dataset_url=getattr(session, "dataset_url", None) if session else None,
@@ -662,6 +704,7 @@ def ask(
                 question=question,
                 result=result,
                 file_path=normalized_file_path,
+                user_id=user_id,
             )
         except Exception as persist_exc:
             logger.warning(
@@ -700,6 +743,7 @@ def ask(
             memory_svc.persist(
                 session_id,
                 result,
+                user_id=user_id,
                 question=question,
                 prior=memory_bundle,
             )
@@ -715,6 +759,7 @@ def ask(
         response = _stable_response(result, question=question)
         if isinstance(response, dict):
             response["session_id"] = session_id
+            response["user_id"] = user_id
             if turn:
                 response["message_id"] = turn.get("message_id")
                 response["artifact_ids"] = turn.get("artifact_ids") or []

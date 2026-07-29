@@ -51,6 +51,7 @@ class AnalystState(TypedDict, total=False):
     session_dataset_topic: Optional[str]
     # Phase 5 — hierarchical memory (injected each request)
     session_id: Optional[str]
+    user_id: Optional[str]
     dataset_fingerprint: Optional[str]
     memory: dict[str, Any]
     conversation_memory: dict[str, Any]

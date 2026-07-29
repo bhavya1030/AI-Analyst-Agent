@@ -1,16 +1,20 @@
-"""FastAPI routes for session management (Phase 1–4).
+"""FastAPI routes for session management (Phase 1–8).
 
 Static paths (/sessions/search, /sessions/recent, /sessions/import) are
 registered before path parameters so they are not captured by /sessions/{id}.
+
+Phase 8: every route resolves AuthUser via Depends and scopes queries by user_id.
 """
 
 from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Body, Query
+from fastapi import APIRouter, Body, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
+from backend.auth.context import AuthUser
+from backend.auth.deps import get_current_user
 from backend.core.logger import get_logger
 from backend.sessions.schemas import (
     SessionCreateRequest,
@@ -23,7 +27,11 @@ from backend.sessions.schemas import (
     SessionSwitchRequest,
     SessionUpdateRequest,
 )
-from backend.sessions.service import SessionNotFoundError, get_session_service
+from backend.sessions.service import (
+    SessionAccessDenied,
+    SessionNotFoundError,
+    get_session_service,
+)
 from backend.utils.json_safe import sanitize_for_json
 
 logger = get_logger(__name__)
@@ -41,11 +49,30 @@ def _not_found(session_id: str) -> JSONResponse:
     )
 
 
+def _forbidden(session_id: str, user_id: str | None = None) -> JSONResponse:
+    return JSONResponse(
+        status_code=403,
+        content={
+            "error": f"Access denied to session '{session_id}'",
+            "code": "SESSION_ACCESS_DENIED",
+            "user_id": user_id,
+        },
+    )
+
+
 def _server_error(message: str, code: str, details: str | None = None) -> JSONResponse:
     body: dict = {"error": message, "code": code}
     if details:
         body["details"] = details
     return JSONResponse(status_code=500, content=body)
+
+
+def _handle_access(exc: Exception, session_id: str, user_id: str | None):
+    if isinstance(exc, SessionAccessDenied):
+        return _forbidden(session_id, user_id)
+    if isinstance(exc, SessionNotFoundError):
+        return _not_found(session_id)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +82,10 @@ def _server_error(message: str, code: str, details: str | None = None) -> JSONRe
 
 @router.post("/sessions", status_code=201)
 @router.post("/v1/sessions", status_code=201)
-def create_session(body: SessionCreateRequest | None = None):
+def create_session(
+    body: SessionCreateRequest | None = None,
+    user: AuthUser = Depends(get_current_user),
+):
     body = body or SessionCreateRequest()
     try:
         svc = get_session_service()
@@ -67,9 +97,12 @@ def create_session(body: SessionCreateRequest | None = None):
             dataset_path=body.dataset_path,
             dataset_url=body.dataset_url,
             tags=body.tags,
-            user_id=body.user_id or "anonymous",
+            # Ownership from auth context — never trust body.user_id for isolation
+            user_id=user.user_id,
         )
         return JSONResponse(status_code=201, content=sanitize_for_json(created))
+    except SessionAccessDenied:
+        return _forbidden(body.session_id or "", user.user_id)
     except Exception as exc:
         logger.error("Failed to create session", extra={"error": str(exc)})
         return _server_error("Unable to create session", "SESSION_CREATE_FAILED", str(exc))
@@ -99,15 +132,18 @@ def list_sessions(
     tag: Optional[str] = Query(None),
     dataset_topic: Optional[str] = Query(None),
     q: Optional[str] = Query(None, description="Free-text filter on title/query/topic"),
-    user_id: Optional[str] = Query(None),
+    user: AuthUser = Depends(get_current_user),
 ):
     try:
         svc = get_session_service()
+        # Always filter by authenticated user (Phase 8)
         if not detail:
-            return svc.list_session_ids(include_deleted=include_deleted)
+            return svc.list_session_ids(
+                user_id=user.user_id, include_deleted=include_deleted
+            )
 
         payload = svc.list_sessions(
-            user_id=user_id,
+            user_id=user.user_id,
             include_deleted=include_deleted,
             include_archived=include_archived,
             limit=limit,
@@ -141,18 +177,14 @@ def search_sessions(
     offset: int = Query(0, ge=0),
     include_archived: bool = Query(False),
     include_deleted: bool = Query(False),
-    user_id: Optional[str] = Query(None),
+    user: AuthUser = Depends(get_current_user),
 ):
-    """
-    Ranked full-text search across session titles, messages, summaries, and tags.
-
-    Uses SQLite FTS5 (BM25) when available, with highlight/snippet markup.
-    """
+    """Ranked full-text search — scoped to the calling user."""
     try:
         svc = get_session_service()
         payload = svc.search_sessions(
             q,
-            user_id=user_id,
+            user_id=user.user_id,
             limit=limit,
             offset=offset,
             include_archived=include_archived,
@@ -169,12 +201,12 @@ def search_sessions(
 def recent_sessions(
     limit: int = Query(10, ge=1, le=100),
     include_archived: bool = Query(False),
-    user_id: Optional[str] = Query(None),
+    user: AuthUser = Depends(get_current_user),
 ):
     try:
         svc = get_session_service()
         payload = svc.recent_sessions(
-            user_id=user_id,
+            user_id=user.user_id,
             limit=limit,
             include_archived=include_archived,
         )
@@ -188,16 +220,24 @@ def recent_sessions(
 
 @router.post("/sessions/switch")
 @router.post("/v1/sessions/switch")
-def switch_session(body: SessionSwitchRequest):
+def switch_session(
+    body: SessionSwitchRequest,
+    user: AuthUser = Depends(get_current_user),
+):
     """Flush optional from-session continuity and restore to-session checkpoint."""
     try:
+        svc = get_session_service()
+        # Ownership of both ends
+        if body.from_session_id:
+            svc.assert_session_owner(body.from_session_id, user.user_id)
+        svc.assert_session_owner(body.to_session_id, user.user_id)
+
         from backend.graph.checkpoint_service import get_checkpoint_service
 
         result = get_checkpoint_service().switch_session(
             body.from_session_id,
             body.to_session_id,
         )
-        # Do not return full graph_state (may include large structures) — summary only
         payload = {
             "from_session_id": result.get("from_session_id"),
             "to_session_id": result.get("to_session_id"),
@@ -208,8 +248,13 @@ def switch_session(body: SessionSwitchRequest):
             "planner_state": result.get("planner_state") or {},
             "dataset_ref": result.get("dataset_ref") or {},
             "graph_resumable": bool(result.get("resumable")),
+            "user_id": user.user_id,
         }
         return sanitize_for_json(payload)
+    except SessionAccessDenied:
+        return _forbidden(body.to_session_id, user.user_id)
+    except SessionNotFoundError as exc:
+        return _not_found(exc.session_id)
     except Exception as exc:
         logger.error("Session switch failed", extra={"error": str(exc)})
         return _server_error("Unable to switch session", "SESSION_SWITCH_FAILED", str(exc))
@@ -217,14 +262,17 @@ def switch_session(body: SessionSwitchRequest):
 
 @router.post("/sessions/import", status_code=201)
 @router.post("/v1/sessions/import", status_code=201)
-def import_session(body: SessionImportRequest):
+def import_session(
+    body: SessionImportRequest,
+    user: AuthUser = Depends(get_current_user),
+):
     try:
         svc = get_session_service()
         result = svc.import_session(
             body.bundle,
             session_id=body.session_id,
             title=body.title,
-            user_id=body.user_id or "anonymous",
+            user_id=user.user_id,
         )
         return JSONResponse(status_code=201, content=sanitize_for_json(result))
     except ValueError as exc:
@@ -237,6 +285,13 @@ def import_session(body: SessionImportRequest):
         return _server_error("Unable to import session", "SESSION_IMPORT_FAILED", str(exc))
 
 
+@router.get("/auth/me")
+@router.get("/v1/auth/me")
+def auth_me(user: AuthUser = Depends(get_current_user)):
+    """Return resolved identity for debugging / future JWT clients."""
+    return sanitize_for_json(user.to_dict())
+
+
 # ---------------------------------------------------------------------------
 # Single session CRUD
 # ---------------------------------------------------------------------------
@@ -244,11 +299,16 @@ def import_session(body: SessionImportRequest):
 
 @router.get("/sessions/{session_id}")
 @router.get("/v1/sessions/{session_id}")
-def get_session(session_id: str):
+def get_session(
+    session_id: str,
+    user: AuthUser = Depends(get_current_user),
+):
     try:
         svc = get_session_service()
-        detail = svc.get_session_detail(session_id)
+        detail = svc.get_session_detail(session_id, user_id=user.user_id)
         return sanitize_for_json(detail)
+    except SessionAccessDenied:
+        return _forbidden(session_id, user.user_id)
     except SessionNotFoundError:
         return _not_found(session_id)
     except Exception as exc:
@@ -261,11 +321,16 @@ def get_session(session_id: str):
 
 @router.put("/sessions/{session_id}")
 @router.put("/v1/sessions/{session_id}")
-def update_session(session_id: str, body: SessionUpdateRequest):
+def update_session(
+    session_id: str,
+    body: SessionUpdateRequest,
+    user: AuthUser = Depends(get_current_user),
+):
     try:
         svc = get_session_service()
         updated = svc.update_session(
             session_id,
+            user_id=user.user_id,
             title=body.title,
             dataset_id=body.dataset_id,
             dataset_name=body.dataset_name,
@@ -278,6 +343,8 @@ def update_session(session_id: str, body: SessionUpdateRequest):
             status=body.status,
         )
         return sanitize_for_json(updated)
+    except SessionAccessDenied:
+        return _forbidden(session_id, user.user_id)
     except SessionNotFoundError:
         return _not_found(session_id)
     except Exception as exc:
@@ -293,11 +360,14 @@ def update_session(session_id: str, body: SessionUpdateRequest):
 def delete_session(
     session_id: str,
     hard: bool = Query(False, description="Permanently delete when true; soft-delete by default."),
+    user: AuthUser = Depends(get_current_user),
 ):
     try:
         svc = get_session_service()
-        result = svc.delete_session(session_id, hard=hard)
+        result = svc.delete_session(session_id, user_id=user.user_id, hard=hard)
         return sanitize_for_json(result)
+    except SessionAccessDenied:
+        return _forbidden(session_id, user.user_id)
     except SessionNotFoundError:
         return _not_found(session_id)
     except Exception as exc:
@@ -315,16 +385,22 @@ def delete_session(
 
 @router.post("/sessions/{session_id}/rename")
 @router.post("/v1/sessions/{session_id}/rename")
-def rename_session(session_id: str, body: SessionRenameRequest):
+def rename_session(
+    session_id: str,
+    body: SessionRenameRequest,
+    user: AuthUser = Depends(get_current_user),
+):
     try:
         svc = get_session_service()
-        result = svc.rename_session(session_id, body.title)
+        result = svc.rename_session(session_id, body.title, user_id=user.user_id)
         return sanitize_for_json(result)
     except ValueError as exc:
         return JSONResponse(
             status_code=400,
             content={"error": str(exc), "code": "SESSION_RENAME_INVALID"},
         )
+    except SessionAccessDenied:
+        return _forbidden(session_id, user.user_id)
     except SessionNotFoundError:
         return _not_found(session_id)
     except Exception as exc:
@@ -337,11 +413,16 @@ def rename_session(session_id: str, body: SessionRenameRequest):
 
 @router.post("/sessions/{session_id}/archive")
 @router.post("/v1/sessions/{session_id}/archive")
-def archive_session(session_id: str):
+def archive_session(
+    session_id: str,
+    user: AuthUser = Depends(get_current_user),
+):
     try:
         svc = get_session_service()
-        result = svc.archive_session(session_id)
+        result = svc.archive_session(session_id, user_id=user.user_id)
         return sanitize_for_json(result)
+    except SessionAccessDenied:
+        return _forbidden(session_id, user.user_id)
     except SessionNotFoundError:
         return _not_found(session_id)
     except Exception as exc:
@@ -354,11 +435,16 @@ def archive_session(session_id: str):
 
 @router.post("/sessions/{session_id}/restore")
 @router.post("/v1/sessions/{session_id}/restore")
-def restore_session(session_id: str):
+def restore_session(
+    session_id: str,
+    user: AuthUser = Depends(get_current_user),
+):
     try:
         svc = get_session_service()
-        result = svc.restore_session(session_id)
+        result = svc.restore_session(session_id, user_id=user.user_id)
         return sanitize_for_json(result)
+    except SessionAccessDenied:
+        return _forbidden(session_id, user.user_id)
     except SessionNotFoundError:
         return _not_found(session_id)
     except Exception as exc:
@@ -374,12 +460,15 @@ def restore_session(session_id: str):
 def favorite_session(
     session_id: str,
     body: SessionFavoriteRequest | None = Body(default=None),
+    user: AuthUser = Depends(get_current_user),
 ):
     body = body or SessionFavoriteRequest()
     try:
         svc = get_session_service()
-        result = svc.set_favorite(session_id, body.favorite)
+        result = svc.set_favorite(session_id, body.favorite, user_id=user.user_id)
         return sanitize_for_json(result)
+    except SessionAccessDenied:
+        return _forbidden(session_id, user.user_id)
     except SessionNotFoundError:
         return _not_found(session_id)
     except Exception as exc:
@@ -397,6 +486,7 @@ def favorite_session(
 def pin_session(
     session_id: str,
     body: SessionPinRequest | None = Body(default=None),
+    user: AuthUser = Depends(get_current_user),
 ):
     body = body or SessionPinRequest()
     try:
@@ -405,8 +495,11 @@ def pin_session(
             session_id,
             body.pinned,
             pin_order=body.pin_order,
+            user_id=user.user_id,
         )
         return sanitize_for_json(result)
+    except SessionAccessDenied:
+        return _forbidden(session_id, user.user_id)
     except SessionNotFoundError:
         return _not_found(session_id)
     except Exception as exc:
@@ -422,17 +515,21 @@ def pin_session(
 def duplicate_session(
     session_id: str,
     body: SessionDuplicateRequest | None = Body(default=None),
+    user: AuthUser = Depends(get_current_user),
 ):
     body = body or SessionDuplicateRequest()
     try:
         svc = get_session_service()
         result = svc.duplicate_session(
             session_id,
+            user_id=user.user_id,
             title=body.title,
             include_messages=body.include_messages,
             include_artifacts=body.include_artifacts,
         )
         return JSONResponse(status_code=201, content=sanitize_for_json(result))
+    except SessionAccessDenied:
+        return _forbidden(session_id, user.user_id)
     except SessionNotFoundError:
         return _not_found(session_id)
     except Exception as exc:
@@ -447,11 +544,16 @@ def duplicate_session(
 
 @router.get("/sessions/{session_id}/export")
 @router.get("/v1/sessions/{session_id}/export")
-def export_session(session_id: str):
+def export_session(
+    session_id: str,
+    user: AuthUser = Depends(get_current_user),
+):
     try:
         svc = get_session_service()
-        bundle = svc.export_session(session_id)
+        bundle = svc.export_session(session_id, user_id=user.user_id)
         return sanitize_for_json(bundle)
+    except SessionAccessDenied:
+        return _forbidden(session_id, user.user_id)
     except SessionNotFoundError:
         return _not_found(session_id)
     except Exception as exc:
@@ -472,15 +574,20 @@ def export_session(session_id: str):
 def list_session_checkpoints(
     session_id: str,
     limit: int = Query(20, ge=1, le=100),
+    user: AuthUser = Depends(get_current_user),
 ):
     try:
+        get_session_service().assert_session_owner(session_id, user.user_id)
         from backend.graph.checkpoint_service import get_checkpoint_service
 
-        # Ensure session exists (or was used)
         payload = get_checkpoint_service().list_session_checkpoints(
             session_id, limit=limit
         )
         return sanitize_for_json(payload)
+    except SessionAccessDenied:
+        return _forbidden(session_id, user.user_id)
+    except SessionNotFoundError:
+        return _not_found(session_id)
     except Exception as exc:
         logger.error(
             "Failed to list checkpoints",
@@ -496,22 +603,17 @@ def list_session_checkpoints(
 def resume_session(
     session_id: str,
     body: SessionResumeRequest | None = Body(default=None),
+    user: AuthUser = Depends(get_current_user),
 ):
-    """
-    Crash recovery: restore latest graph + planner checkpoint for the session.
-
-    Returns planner_state and dataset_ref; full frames are reloaded server-side
-    on the next /ask for this session_id.
-    """
     body = body or SessionResumeRequest()
     try:
+        get_session_service().assert_session_owner(session_id, user.user_id)
         from backend.graph.checkpoint_service import get_checkpoint_service
 
         result = get_checkpoint_service().resume_session(
             session_id, question=body.question
         )
         gs = result.get("graph_state") or {}
-        # Strip non-JSON frame objects for HTTP response
         safe_preview = {
             k: v
             for k, v in gs.items()
@@ -527,8 +629,13 @@ def resume_session(
             "dataset_ref": result.get("dataset_ref") or {},
             "graph_resumable": bool(result.get("resumable")),
             "graph_state_preview": sanitize_for_json(safe_preview),
+            "user_id": user.user_id,
         }
         return sanitize_for_json(payload)
+    except SessionAccessDenied:
+        return _forbidden(session_id, user.user_id)
+    except SessionNotFoundError:
+        return _not_found(session_id)
     except Exception as exc:
         logger.error(
             "Failed to resume session",

@@ -138,11 +138,29 @@ class SessionNotFoundError(Exception):
         super().__init__(f"Session '{session_id}' not found")
 
 
+class SessionAccessDenied(Exception):
+    """Raised when the caller does not own the session (Phase 8 isolation)."""
+
+    def __init__(self, session_id: str, user_id: str | None = None):
+        self.session_id = session_id
+        self.user_id = user_id
+        super().__init__(
+            f"Access denied to session '{session_id}'"
+            + (f" for user '{user_id}'" if user_id else "")
+        )
+
+
 class SessionService:
-    """Production session store with legacy dual-write."""
+    """Production session store with legacy dual-write and user isolation."""
 
     def __init__(self) -> None:
         ensure_session_tables()
+        try:
+            from backend.auth.service import ensure_auth_schema
+
+            ensure_auth_schema()
+        except Exception:
+            pass
 
     @staticmethod
     def _reindex(session_id: str) -> None:
@@ -179,13 +197,14 @@ class SessionService:
         include_archived: bool = False,
         include_deleted: bool = False,
     ) -> dict[str, Any]:
-        """Full-text search (Phase 4) — FTS5 with ranking + highlights."""
+        """Full-text search (Phase 4) — always scoped to user_id (Phase 8)."""
         ensure_session_tables()
         from backend.sessions.search import search_sessions_fts
 
+        owner = (user_id or "anonymous").strip() or "anonymous"
         return search_sessions_fts(
             q,
-            user_id=user_id,
+            user_id=owner,
             limit=limit,
             offset=offset,
             include_archived=include_archived,
@@ -220,7 +239,10 @@ class SessionService:
                 .filter(AnalysisSession.session_id == sid)
                 .first()
             )
+            owner = user_id or "anonymous"
             if existing is not None:
+                if (existing.user_id or "anonymous") != owner:
+                    raise SessionAccessDenied(sid, owner)
                 if existing.deleted:
                     # Re-open soft-deleted id as a fresh shell
                     existing.deleted = False
@@ -229,6 +251,7 @@ class SessionService:
                     existing.title = resolved_title
                     existing.updated_at = now
                     existing.last_activity_at = now
+                    existing.user_id = owner
                     if dataset_id is not None:
                         existing.dataset_id = dataset_id
                     if dataset_name is not None:
@@ -299,7 +322,11 @@ class SessionService:
                 .filter(AnalysisSession.session_id == sid)
                 .first()
             )
+            owner = user_id or "anonymous"
             if row is not None:
+                # Phase 8: do not allow another user to adopt an existing session
+                if (row.user_id or "anonymous") != owner:
+                    raise SessionAccessDenied(sid, owner)
                 if row.deleted:
                     row.deleted = False
                     row.status = "active"
@@ -315,13 +342,13 @@ class SessionService:
                 .first()
             )
             if legacy is not None:
-                row = self._migrate_legacy(db, legacy, user_id=user_id)
+                row = self._migrate_legacy(db, legacy, user_id=owner)
                 return self._detach_copy(db, row)
 
             now = _utcnow()
             row = AnalysisSession(
                 session_id=sid,
-                user_id=user_id or "anonymous",
+                user_id=owner,
                 title=(title or "").strip() or "New analysis",
                 created_at=now,
                 updated_at=now,
@@ -376,12 +403,14 @@ class SessionService:
 
         db = SessionLocal()
         try:
-            self._migrate_all_legacy(db, user_id=user_id)
+            # Phase 8: always scope list to a user (default anonymous)
+            owner = (user_id or "anonymous").strip() or "anonymous"
+            self._migrate_all_legacy(db, user_id=owner)
 
-            q_db = db.query(AnalysisSession)
-            if user_id:
-                q_db = q_db.filter(AnalysisSession.user_id == user_id)
-                applied_filters["user_id"] = user_id
+            q_db = db.query(AnalysisSession).filter(
+                AnalysisSession.user_id == owner
+            )
+            applied_filters["user_id"] = owner
 
             # archived filter takes precedence over include_archived flag
             if archived is not None:
@@ -473,23 +502,25 @@ class SessionService:
         finally:
             db.close()
 
-    def list_session_ids(self, *, include_deleted: bool = False) -> list[str]:
-        """Backward-compatible flat list of session ids (UI expects string[])."""
+    def list_session_ids(
+        self,
+        *,
+        user_id: str | None = None,
+        include_deleted: bool = False,
+    ) -> list[str]:
+        """Backward-compatible flat list of session ids for the calling user."""
         ensure_session_tables()
+        owner = (user_id or "anonymous").strip() or "anonymous"
         db = SessionLocal()
         try:
-            self._migrate_all_legacy(db)
+            self._migrate_all_legacy(db, user_id=owner)
 
-            q = db.query(AnalysisSession.session_id)
+            q = db.query(AnalysisSession.session_id).filter(
+                AnalysisSession.user_id == owner
+            )
             if not include_deleted:
                 q = q.filter(AnalysisSession.deleted.is_(False))
             ids = [r[0] for r in q.order_by(AnalysisSession.updated_at.desc()).all()]
-
-            # Union any legacy ids not yet migrated (paranoia)
-            legacy_ids = [r[0] for r in db.query(SessionMemory.session_id).all()]
-            for lid in legacy_ids:
-                if lid not in ids:
-                    ids.append(lid)
             return ids
         finally:
             db.close()
@@ -498,12 +529,14 @@ class SessionService:
         self,
         session_id: str,
         *,
+        user_id: str | None = None,
         include_deleted: bool = False,
     ) -> dict[str, Any]:
         ensure_session_tables()
         sid = (session_id or "").strip()
         if not sid:
             raise SessionNotFoundError(session_id or "")
+        owner = (user_id or "anonymous").strip() or "anonymous"
 
         db = SessionLocal()
         try:
@@ -525,7 +558,7 @@ class SessionService:
                 )
                 if legacy is None:
                     raise SessionNotFoundError(sid)
-                row = self._migrate_legacy(db, legacy)
+                row = self._migrate_legacy(db, legacy, user_id=owner)
                 row = (
                     db.query(AnalysisSession)
                     .options(
@@ -538,6 +571,8 @@ class SessionService:
 
             if row is None:
                 raise SessionNotFoundError(sid)
+            if (row.user_id or "anonymous") != owner:
+                raise SessionAccessDenied(sid, owner)
             if row.deleted and not include_deleted:
                 raise SessionNotFoundError(sid)
 
@@ -549,6 +584,7 @@ class SessionService:
         self,
         session_id: str,
         *,
+        user_id: str | None = None,
         title: str | None = None,
         dataset_id: str | None = None,
         dataset_name: str | None = None,
@@ -563,7 +599,9 @@ class SessionService:
         ensure_session_tables()
         db = SessionLocal()
         try:
-            row = self._require_row(db, session_id, allow_deleted=True)
+            row = self._require_row(
+                db, session_id, user_id=user_id, allow_deleted=True
+            )
             if title is not None:
                 cleaned = title.strip()
                 if cleaned:
@@ -608,19 +646,25 @@ class SessionService:
     # Phase 3 — lifecycle & organization
     # ------------------------------------------------------------------
 
-    def rename_session(self, session_id: str, title: str) -> dict[str, Any]:
+    def rename_session(
+        self, session_id: str, title: str, *, user_id: str | None = None
+    ) -> dict[str, Any]:
         cleaned = (title or "").strip()
         if not cleaned:
             raise ValueError("title must be non-empty")
-        result = self.update_session(session_id, title=cleaned)
+        result = self.update_session(session_id, user_id=user_id, title=cleaned)
         self._reindex(session_id)
         return result
 
-    def archive_session(self, session_id: str) -> dict[str, Any]:
+    def archive_session(
+        self, session_id: str, *, user_id: str | None = None
+    ) -> dict[str, Any]:
         ensure_session_tables()
         db = SessionLocal()
         try:
-            row = self._require_row(db, session_id, allow_deleted=False)
+            row = self._require_row(
+                db, session_id, user_id=user_id, allow_deleted=False
+            )
             row.archived = True
             row.deleted = False
             row.status = "archived"
@@ -632,12 +676,16 @@ class SessionService:
         finally:
             db.close()
 
-    def restore_session(self, session_id: str) -> dict[str, Any]:
+    def restore_session(
+        self, session_id: str, *, user_id: str | None = None
+    ) -> dict[str, Any]:
         """Unarchive and/or undelete a session back to active."""
         ensure_session_tables()
         db = SessionLocal()
         try:
-            row = self._require_row(db, session_id, allow_deleted=True)
+            row = self._require_row(
+                db, session_id, user_id=user_id, allow_deleted=True
+            )
             row.archived = False
             row.deleted = False
             row.status = "active"
@@ -651,11 +699,19 @@ class SessionService:
         finally:
             db.close()
 
-    def set_favorite(self, session_id: str, favorite: bool = True) -> dict[str, Any]:
+    def set_favorite(
+        self,
+        session_id: str,
+        favorite: bool = True,
+        *,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
         ensure_session_tables()
         db = SessionLocal()
         try:
-            row = self._require_row(db, session_id, allow_deleted=False)
+            row = self._require_row(
+                db, session_id, user_id=user_id, allow_deleted=False
+            )
             row.favorite = bool(favorite)
             row.updated_at = _utcnow()
             db.commit()
@@ -670,11 +726,14 @@ class SessionService:
         pinned: bool = True,
         *,
         pin_order: int | None = None,
+        user_id: str | None = None,
     ) -> dict[str, Any]:
         ensure_session_tables()
         db = SessionLocal()
         try:
-            row = self._require_row(db, session_id, allow_deleted=False)
+            row = self._require_row(
+                db, session_id, user_id=user_id, allow_deleted=False
+            )
             row.pinned = bool(pinned)
             if row.pinned:
                 if pin_order is not None:
@@ -705,11 +764,13 @@ class SessionService:
         self,
         session_id: str,
         *,
+        user_id: str | None = None,
         title: str | None = None,
         include_messages: bool = True,
         include_artifacts: bool = True,
     ) -> dict[str, Any]:
         ensure_session_tables()
+        owner = (user_id or "anonymous").strip() or "anonymous"
         db = SessionLocal()
         try:
             source = (
@@ -723,6 +784,8 @@ class SessionService:
             )
             if source is None or source.deleted:
                 raise SessionNotFoundError(session_id)
+            if (source.user_id or "anonymous") != owner:
+                raise SessionAccessDenied(session_id, owner)
 
             now = _utcnow()
             new_id = str(uuid.uuid4())
@@ -730,7 +793,7 @@ class SessionService:
 
             clone = AnalysisSession(
                 session_id=new_id,
-                user_id=source.user_id or "anonymous",
+                user_id=owner,
                 title=new_title[:512],
                 created_at=now,
                 updated_at=now,
@@ -813,9 +876,13 @@ class SessionService:
         finally:
             db.close()
 
-    def export_session(self, session_id: str) -> dict[str, Any]:
+    def export_session(
+        self, session_id: str, *, user_id: str | None = None
+    ) -> dict[str, Any]:
         ensure_session_tables()
-        detail = self.get_session_detail(session_id, include_deleted=True)
+        detail = self.get_session_detail(
+            session_id, user_id=user_id, include_deleted=True
+        )
         messages = detail.get("chat_history") or []
         artifacts = detail.get("artifacts") or []
         session_meta = {
@@ -1015,7 +1082,13 @@ class SessionService:
             order="desc",
         )
 
-    def delete_session(self, session_id: str, *, hard: bool = False) -> dict[str, Any]:
+    def delete_session(
+        self,
+        session_id: str,
+        *,
+        user_id: str | None = None,
+        hard: bool = False,
+    ) -> dict[str, Any]:
         ensure_session_tables()
         db = SessionLocal()
         try:
@@ -1038,12 +1111,20 @@ class SessionService:
                     db.commit()
                 else:
                     # Create tombstone session then soft-delete
-                    row = self._migrate_legacy(db, legacy)
+                    row = self._migrate_legacy(
+                        db, legacy, user_id=(user_id or "anonymous")
+                    )
                     row.deleted = True
                     row.status = "deleted"
                     row.updated_at = _utcnow()
                     db.commit()
                 return {"session_id": session_id, "deleted": True, "hard": hard}
+
+            # Enforce ownership only when caller supplies user_id (API always does)
+            if user_id is not None:
+                owner = (user_id or "anonymous").strip() or "anonymous"
+                if (row.user_id or "anonymous") != owner:
+                    raise SessionAccessDenied(session_id, owner)
 
             if hard:
                 sid = row.session_id
@@ -1091,7 +1172,9 @@ class SessionService:
 
         db = SessionLocal()
         try:
-            row = self._require_row(db, session_id, allow_deleted=False)
+            row = self._require_row(
+                db, session_id, user_id=user_id, allow_deleted=False
+            )
             seq = self._next_seq(db, session_id)
             msg = SessionMessage(
                 id=str(uuid.uuid4()),
@@ -1133,13 +1216,14 @@ class SessionService:
         question: str,
         result: dict[str, Any],
         file_path: str | None = None,
+        user_id: str = "anonymous",
     ) -> dict[str, Any]:
         """
         Persist assistant message + artifacts after a successful graph run.
         Also dual-writes legacy session_memory fields.
         """
         ensure_session_tables()
-        self.ensure_session(session_id)
+        self.ensure_session(session_id, user_id=user_id)
 
         safe_result = self._sanitize_graph_result(result)
 
@@ -1148,7 +1232,9 @@ class SessionService:
 
         db = SessionLocal()
         try:
-            row = self._require_row(db, session_id, allow_deleted=False)
+            row = self._require_row(
+                db, session_id, user_id=user_id, allow_deleted=False
+            )
 
             # --- dataset binding ---
             self._apply_dataset_from_result(row, safe_result, file_path=file_path)
@@ -1272,8 +1358,10 @@ class SessionService:
         db: DbSession,
         session_id: str,
         *,
+        user_id: str | None = None,
         allow_deleted: bool = False,
     ) -> AnalysisSession:
+        """Load session and enforce ownership when user_id is provided."""
         row = (
             db.query(AnalysisSession)
             .filter(AnalysisSession.session_id == session_id)
@@ -1283,7 +1371,28 @@ class SessionService:
             raise SessionNotFoundError(session_id)
         if row.deleted and not allow_deleted:
             raise SessionNotFoundError(session_id)
+        if user_id is not None:
+            owner = (user_id or "anonymous").strip() or "anonymous"
+            if (row.user_id or "anonymous") != owner:
+                raise SessionAccessDenied(session_id, owner)
         return row
+
+    def assert_session_owner(
+        self, session_id: str, user_id: str, *, allow_deleted: bool = False
+    ) -> dict[str, Any]:
+        """Public ownership check used by routers / checkpoint APIs."""
+        ensure_session_tables()
+        db = SessionLocal()
+        try:
+            row = self._require_row(
+                db,
+                session_id,
+                user_id=user_id,
+                allow_deleted=allow_deleted,
+            )
+            return self._summary_dict(row)
+        finally:
+            db.close()
 
     def _next_seq(self, db: DbSession, session_id: str) -> int:
         last = (
@@ -1711,6 +1820,7 @@ class SessionService:
                 "tags": list(row.tags_json or []),
                 "last_query": row.last_query,
                 "conversation_summary": getattr(row, "conversation_summary", None),
+                "user_id": row.user_id or "anonymous",
             }
         )
 
@@ -1816,6 +1926,8 @@ class SessionService:
                 "eda_summary": row.eda_summary or {},
                 # Phase 7 — durable conversation summary
                 "conversation_summary": getattr(row, "conversation_summary", None) or "",
+                # Phase 8 — ownership
+                "user_id": row.user_id or "anonymous",
             }
         )
 
