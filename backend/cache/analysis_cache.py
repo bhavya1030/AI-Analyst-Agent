@@ -31,9 +31,17 @@ KIND_PROFILE = "profile"
 KIND_EMBEDDING = "embedding"
 KIND_FORECAST = "forecast"
 KIND_CHART = "chart"
+KIND_ASK = "ask"  # full /v1/ask response short-circuit
 
 VALID_KINDS = frozenset(
-    {KIND_EDA, KIND_PROFILE, KIND_EMBEDDING, KIND_FORECAST, KIND_CHART}
+    {
+        KIND_EDA,
+        KIND_PROFILE,
+        KIND_EMBEDDING,
+        KIND_FORECAST,
+        KIND_CHART,
+        KIND_ASK,
+    }
 )
 
 _schema_lock = threading.Lock()
