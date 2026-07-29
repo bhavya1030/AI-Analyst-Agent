@@ -596,6 +596,52 @@ def analyze(
         )
 
 
+@app.get("/v1/cache/stats")
+@app.get("/cache/stats")
+def cache_stats(user: AuthUser = Depends(get_current_user)):
+    """Ask-level + durable analysis cache statistics."""
+    from backend.cache.ask_cache import get_ask_cache
+
+    try:
+        stats = get_ask_cache().stats()
+        stats["user_id"] = user.user_id
+        return sanitize_for_json(stats)
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Unable to read cache stats", "details": str(exc)},
+        )
+
+
+@app.post("/v1/cache/invalidate")
+@app.post("/cache/invalidate")
+def cache_invalidate(
+    fingerprint: str | None = None,
+    file_path: str | None = None,
+    user: AuthUser = Depends(get_current_user),
+):
+    """Invalidate cache entries when a dataset changes."""
+    from backend.cache.ask_cache import get_ask_cache, resolve_dataset_fingerprint
+
+    fp = (fingerprint or "").strip()
+    if not fp and file_path:
+        fp = resolve_dataset_fingerprint(file_path=file_path) or ""
+    if not fp:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "fingerprint or file_path is required"},
+        )
+    deleted = get_ask_cache().invalidate_dataset(fp)
+    return sanitize_for_json(
+        {
+            "fingerprint": fp,
+            "deleted": deleted,
+            "user_id": user.user_id,
+            "stats": get_ask_cache().stats(),
+        }
+    )
+
+
 @app.get("/v1/ask")
 @app.get("/ask")
 def ask(
@@ -604,10 +650,22 @@ def ask(
     file_path: str | None = None,
     user: AuthUser = Depends(get_current_user),
 ):
+    import time as _time
+
+    from backend.cache.ask_cache import (
+        get_ask_cache,
+        primary_intent,
+        resolve_dataset_fingerprint,
+    )
+    from backend.cache.fingerprint import compute_dataset_fingerprint
+
+    ask_t0 = _time.perf_counter()
     session_svc = get_session_service()
     memory_svc = get_memory_hierarchy()
     user_id = user.user_id
     normalized_file_path = _normalize_dataset_reference(file_path)
+    ask_cache = get_ask_cache()
+    intent = primary_intent(question)
 
     # Phase 1: ensure durable session + append user message before the graph run
     try:
@@ -629,6 +687,68 @@ def ask(
         )
 
     session = get_session(session_id)
+
+    # --- Ask-level cache lookup (skip Planner/EDA/Viz/Forecast on hit) ---
+    cache_fp = resolve_dataset_fingerprint(
+        file_path=normalized_file_path
+        if normalized_file_path and not _is_remote_reference(normalized_file_path)
+        else None,
+        dataset_path=getattr(session, "dataset_path", None) if session else None,
+        dataset_url=getattr(session, "dataset_url", None) if session else None,
+    )
+    # High-confidence registry local path for topic (cheap, no graph)
+    if not cache_fp and not normalized_file_path:
+        try:
+            from backend.registry import match_topic
+
+            topic_guess = " ".join((question or "").split()[:10])
+            hits = match_topic(topic_guess or question, question=question, limit=1)
+            if hits and hits[0].metadata and hits[0].metadata.local_path:
+                cache_fp = resolve_dataset_fingerprint(
+                    dataset_path=hits[0].metadata.local_path
+                )
+        except Exception as cache_topic_exc:
+            logger.debug(
+                "Ask cache topic fingerprint probe skipped",
+                extra={"error": str(cache_topic_exc)},
+            )
+
+    if cache_fp:
+        cached_body, cache_meta = ask_cache.get(
+            cache_fp,
+            question,
+            intent=intent,
+            file_path=normalized_file_path,
+        )
+        if cached_body:
+            # Persist session turn from cache (no recompute)
+            try:
+                turn = session_svc.record_assistant_turn(
+                    session_id,
+                    question=question,
+                    result=cached_body,
+                    file_path=normalized_file_path,
+                    user_id=user_id,
+                )
+            except Exception:
+                turn = None
+            elapsed_ms = (_time.perf_counter() - ask_t0) * 1000
+            response = dict(cached_body)
+            response["question"] = question
+            response["session_id"] = session_id
+            response["user_id"] = user_id
+            response["cache_hit"] = True
+            response["cache_skipped_pipeline"] = True
+            response["response_ms"] = round(elapsed_ms, 2)
+            response["cache"] = {
+                **cache_meta,
+                "stats": ask_cache.stats(),
+            }
+            if turn:
+                response["message_id"] = turn.get("message_id")
+                response["artifact_ids"] = turn.get("artifact_ids") or []
+            return sanitize_for_json(response)
+
     state = _build_state(
         session=session,
         question=question,
@@ -772,6 +892,53 @@ def ask(
             if state.get("checkpoint_restored"):
                 response["checkpoint_restored"] = True
                 response["restored_checkpoint_id"] = state.get("restored_checkpoint_id")
+
+            # --- Ask-level cache store (final answer + charts/EDA/forecast) ---
+            try:
+                store_fp = (
+                    result.get("dataset_fingerprint")
+                    or cache_fp
+                    or resolve_dataset_fingerprint(
+                        file_path=normalized_file_path
+                        if normalized_file_path
+                        and not _is_remote_reference(normalized_file_path)
+                        else None,
+                        dataset_path=result.get("local_path") or result.get("file_path"),
+                        dataset_url=result.get("dataset_url"),
+                        data=result.get("data"),
+                    )
+                )
+                if not store_fp and result.get("data") is not None:
+                    store_fp = compute_dataset_fingerprint(
+                        result.get("data"),
+                        result.get("dataset_url") or normalized_file_path,
+                    )
+                cold_ms = (_time.perf_counter() - ask_t0) * 1000
+                if store_fp and not response.get("needs_user_data"):
+                    ask_cache.put(
+                        store_fp,
+                        question,
+                        response,
+                        intent=intent,
+                        file_path=normalized_file_path,
+                        cold_ms=cold_ms,
+                    )
+                    response["dataset_fingerprint"] = store_fp
+                response["cache_hit"] = False
+                response["cache_skipped_pipeline"] = False
+                response["response_ms"] = round(cold_ms, 2)
+                response["cache"] = {
+                    "cache_hit": False,
+                    "fingerprint": store_fp,
+                    "intent": intent,
+                    "stats": ask_cache.stats(),
+                }
+            except Exception as cache_store_exc:
+                logger.warning(
+                    "Ask cache store failed",
+                    extra={"error": str(cache_store_exc)},
+                )
+
         return response
     except Exception as exc:
         logger.error(
