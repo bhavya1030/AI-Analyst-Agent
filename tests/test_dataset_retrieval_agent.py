@@ -105,6 +105,14 @@ def test_registry_hit_with_library_file(tmp_path):
 
 
 def test_stale_registry_entry():
+    from backend.dataset_library import dataset_exists, get_dataset_path
+    from backend.registry import get_by_topic, list_datasets
+
+    # Clean leftover avocado rows from prior runs so confidence matching is deterministic
+    for row in list_datasets(limit=200):
+        if (row.topic or "").lower() == "avocado prices":
+            delete_dataset(row.dataset_id)
+
     reg = insert_dataset(
         {
             "title": "Missing Local",
@@ -113,10 +121,10 @@ def test_stale_registry_entry():
             "local_path": "/nonexistent/path/avo.csv",
             "source": "test",
             "file_format": "csv",
+            "keywords": ["avocado", "prices"],
+            "domain": "general",
         }
     )
-    from backend.dataset_library import dataset_exists, get_dataset_path
-    from backend.registry import get_by_topic
 
     agent = _agent_with(
         session_provider=SessionProvider(),
@@ -129,6 +137,7 @@ def test_stale_registry_entry():
     result = agent.retrieve({"topic": "avocado prices", "force_new_topic": True})
     assert result.status == RetrievalStatus.STALE_REGISTRY_ENTRY
     assert result.dataset_id == reg.dataset_id
+    assert result.metadata is None or result.metadata.get("match_confidence", 1) >= 0.55
 
     delete_dataset(reg.dataset_id)
 
