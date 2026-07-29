@@ -45,6 +45,12 @@ def _loads_dict(raw: str | None) -> dict | None:
 
 
 def record_to_metadata(record: DatasetRegistryRecord) -> DatasetMetadata:
+    # Graceful read of optional columns added in registry redesign
+    keywords = _loads_list(getattr(record, "keywords_json", None))
+    country = _loads_list(getattr(record, "country_json", None))
+    metrics = _loads_list(getattr(record, "metrics_json", None))
+    domain = getattr(record, "domain", None) or "general"
+    fingerprint = getattr(record, "fingerprint", None) or record.checksum
     return DatasetMetadata(
         dataset_id=record.dataset_id,
         title=record.title or "",
@@ -56,7 +62,11 @@ def record_to_metadata(record: DatasetRegistryRecord) -> DatasetMetadata:
         local_path=record.local_path,
         file_format=record.file_format or "unknown",
         tags=_loads_list(record.tags_json),
+        keywords=keywords,
         columns=_loads_list(record.columns_json),
+        domain=domain or "general",
+        country=country,
+        metrics=metrics,
         row_count=record.row_count,
         date_range=_loads_dict(record.date_range_json),
         summary=record.summary or "",
@@ -65,6 +75,7 @@ def record_to_metadata(record: DatasetRegistryRecord) -> DatasetMetadata:
         last_updated=record.last_updated or "",
         usage_count=int(record.usage_count or 0),
         checksum=record.checksum,
+        fingerprint=fingerprint,
         embedding_ref=record.embedding_ref,
         is_active=bool(record.is_active if record.is_active is not None else True),
     )
@@ -81,7 +92,15 @@ def apply_metadata_to_record(record: DatasetRegistryRecord, meta: DatasetMetadat
     record.local_path = meta.local_path
     record.file_format = meta.file_format or "unknown"
     record.tags_json = _dumps(meta.tags or [])
+    if hasattr(record, "keywords_json"):
+        record.keywords_json = _dumps(meta.keywords or [])
     record.columns_json = _dumps(meta.columns or [])
+    if hasattr(record, "domain"):
+        record.domain = meta.domain or "general"
+    if hasattr(record, "country_json"):
+        record.country_json = _dumps(meta.country or [])
+    if hasattr(record, "metrics_json"):
+        record.metrics_json = _dumps(meta.metrics or [])
     record.row_count = meta.row_count
     record.date_range_json = (
         json.dumps(meta.date_range) if meta.date_range is not None else None
@@ -92,6 +111,8 @@ def apply_metadata_to_record(record: DatasetRegistryRecord, meta: DatasetMetadat
     record.last_updated = meta.last_updated
     record.usage_count = int(meta.usage_count or 0)
     record.checksum = meta.checksum
+    if hasattr(record, "fingerprint"):
+        record.fingerprint = meta.fingerprint or meta.checksum
     record.embedding_ref = meta.embedding_ref
     record.is_active = bool(meta.is_active)
 
@@ -189,14 +210,24 @@ class SqlAlchemyDatasetRegistryRepository(DatasetRegistryRepository):
             db.close()
 
     def get_by_topic(self, topic: str, *, limit: int = 20) -> list[DatasetMetadata]:
+        """
+        Candidate recall for a topic (not final acceptance).
+
+        Returns a broad candidate set; callers must run confidence matching
+        (`backend.registry.matching`) before treating results as REGISTRY_HIT.
+        """
         topic = (topic or "").strip()
         if not topic:
             return []
 
         db = self._session()
         try:
-            # Exact topic first, then case-insensitive contains
             normalized = topic.lower()
+            tokens = [
+                t
+                for t in __import__("re").findall(r"[a-z0-9]+", normalized)
+                if len(t) > 2
+            ]
             records = (
                 db.query(DatasetRegistryRecord)
                 .filter(DatasetRegistryRecord.is_active.is_(True))
@@ -206,18 +237,22 @@ class SqlAlchemyDatasetRegistryRepository(DatasetRegistryRepository):
             partial: list[DatasetRegistryRecord] = []
             for record in records:
                 rec_topic = (record.topic or "").lower()
+                rec_title = (record.title or "").lower()
+                tags = [str(t).lower() for t in _loads_list(record.tags_json)]
+                keywords = [str(t).lower() for t in _loads_list(getattr(record, "keywords_json", None))]
+                blob = " ".join([rec_topic, rec_title] + tags + keywords)
+
                 if rec_topic == normalized:
                     exact.append(record)
-                elif normalized in rec_topic or rec_topic in normalized:
+                    continue
+
+                # Controlled partial: shared significant token (len>=3), avoid 1–2 char noise
+                shared = [t for t in tokens if len(t) >= 3 and t in blob]
+                if shared:
                     partial.append(record)
-                else:
-                    # Also match tags loosely
-                    tags = [str(t).lower() for t in _loads_list(record.tags_json)]
-                    if normalized in tags or any(normalized in t or t in normalized for t in tags):
-                        partial.append(record)
 
             ordered = exact + partial
-            return [record_to_metadata(r) for r in ordered[: max(1, limit)]]
+            return [record_to_metadata(r) for r in ordered[: max(1, limit * 3)]]
         finally:
             db.close()
 
@@ -305,6 +340,55 @@ class SqlAlchemyDatasetRegistryRepository(DatasetRegistryRepository):
 
 
 def ensure_registry_schema() -> None:
-    """Create dataset_registry table if missing (idempotent)."""
+    """Create dataset_registry table if missing and migrate new columns (idempotent)."""
     DatasetRegistryRecord.__table__.create(bind=engine, checkfirst=True)
+    # SQLite-friendly additive migration for registry redesign fields
+    _ensure_columns(
+        "dataset_registry",
+        {
+            "keywords_json": "TEXT DEFAULT '[]'",
+            "domain": "VARCHAR DEFAULT 'general'",
+            "country_json": "TEXT DEFAULT '[]'",
+            "metrics_json": "TEXT DEFAULT '[]'",
+            "fingerprint": "VARCHAR",
+        },
+    )
     logger.info("Dataset registry schema ready")
+
+
+def _ensure_columns(table: str, columns: dict[str, str]) -> None:
+    """ADD COLUMN IF NOT EXISTS style migration for SQLite/Postgres."""
+    try:
+        with engine.begin() as conn:
+            existing: set[str] = set()
+            try:
+                # SQLAlchemy 2.x
+                rows = conn.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()
+                existing = {str(r[1]).lower() for r in rows}
+            except Exception:
+                try:
+                    rows = conn.exec_driver_sql(
+                        "SELECT column_name FROM information_schema.columns "
+                        f"WHERE table_name = '{table}'"
+                    ).fetchall()
+                    existing = {str(r[0]).lower() for r in rows}
+                except Exception:
+                    existing = set()
+            for name, ddl in columns.items():
+                if name.lower() in existing:
+                    continue
+                try:
+                    conn.exec_driver_sql(
+                        f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"
+                    )
+                    logger.info(
+                        "Registry schema migrated column",
+                        extra={"table": table, "column": name},
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Registry column migrate skipped",
+                        extra={"column": name, "error": str(exc)},
+                    )
+    except Exception as exc:
+        logger.warning("Registry schema migration failed", extra={"error": str(exc)})

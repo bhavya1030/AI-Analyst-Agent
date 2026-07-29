@@ -271,6 +271,28 @@ class DatasetLearningService:
             else (incoming.dataset_id or new_dataset_id())
         )
 
+        keywords = list(incoming.topic_keywords or [])
+        if existing and getattr(existing, "keywords", None):
+            for k in existing.keywords or []:
+                if k not in keywords:
+                    keywords.append(k)
+        countries = list(incoming.countries_regions or [])
+        if existing and getattr(existing, "country", None):
+            for c in existing.country or []:
+                if c not in countries:
+                    countries.append(c)
+        metrics: list[str] = []
+        if existing and getattr(existing, "metrics", None):
+            metrics.extend(list(existing.metrics or []))
+        domain = (
+            incoming.domain
+            or (getattr(existing, "domain", None) if existing else None)
+            or "general"
+        )
+        fingerprint = checksum or (
+            getattr(existing, "fingerprint", None) if existing else None
+        )
+
         return DatasetMetadata(
             dataset_id=dataset_id,
             title=title,
@@ -282,7 +304,11 @@ class DatasetLearningService:
             local_path=local_path,
             file_format=file_format or "unknown",
             tags=tags,
+            keywords=keywords,
             columns=columns,
+            domain=domain,
+            country=countries,
+            metrics=metrics,
             row_count=row_count,
             date_range=date_range,
             summary=summary,
@@ -291,6 +317,7 @@ class DatasetLearningService:
             last_updated=now,
             usage_count=usage_count,
             checksum=checksum,
+            fingerprint=fingerprint,
             embedding_ref=incoming.embedding_ref or (existing.embedding_ref if existing else None),
             is_active=True,
         )
@@ -416,6 +443,42 @@ class DatasetLearningService:
             line = "Provenance: " + "; ".join(provenance_bits)
             summary = f"{summary}\n{line}".strip() if summary else line
 
+        # Domain / keywords for high-confidence registry matching
+        try:
+            from backend.registry.matching import infer_domain, tokenize
+        except Exception:
+            infer_domain = None
+            tokenize = None
+
+        domain = str(
+            r_meta.get("domain")
+            or p.get("domain")
+            or (infer_domain(f"{topic} {title}", tags=tags) if infer_domain else "general")
+            or "general"
+        )
+        topic_keywords = list(p.get("topic_keywords") or r_meta.get("keywords") or [])
+        if not topic_keywords and tokenize:
+            topic_keywords = tokenize(f"{topic} {title} {description}")
+        countries = list(
+            p.get("countries_regions")
+            or r_meta.get("country")
+            or r_meta.get("countries")
+            or []
+        )
+        metrics = list(r_meta.get("metrics") or [])
+        if not metrics and columns:
+            # Heuristic: numeric-looking column names as metrics
+            for c in columns:
+                cl = str(c).lower()
+                if any(
+                    k in cl
+                    for k in (
+                        "gdp", "value", "price", "rate", "count", "population",
+                        "co2", "emission", "inflation", "score", "index",
+                    )
+                ):
+                    metrics.append(str(c))
+
         return LearningInput(
             dataset_id=dataset_id,
             title=str(title),
@@ -432,11 +495,11 @@ class DatasetLearningService:
             date_range=date_range if isinstance(date_range, dict) else None,
             summary=str(summary or ""),
             checksum=checksum,
-            domain=str(p.get("domain") or "general"),
+            domain=domain,
             time_column=p.get("time_column"),
             entity_column=p.get("entity_column"),
-            countries_regions=list(p.get("countries_regions") or []),
-            topic_keywords=list(p.get("topic_keywords") or []),
+            countries_regions=countries,
+            topic_keywords=topic_keywords,
             dataset_type=str(p.get("dataset_type") or "unknown"),
         )
 
