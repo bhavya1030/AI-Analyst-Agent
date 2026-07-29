@@ -1,7 +1,7 @@
-"""FastAPI routes for session management (Phase 1 + Phase 3).
+"""FastAPI routes for session management (Phase 1–4).
 
-Static paths (/sessions/recent, /sessions/import) are registered before
-path parameters so they are not captured by /sessions/{session_id}.
+Static paths (/sessions/search, /sessions/recent, /sessions/import) are
+registered before path parameters so they are not captured by /sessions/{id}.
 """
 
 from __future__ import annotations
@@ -129,6 +129,37 @@ def list_sessions(
 # ---------------------------------------------------------------------------
 # Static paths (must be before /sessions/{session_id})
 # ---------------------------------------------------------------------------
+
+
+@router.get("/sessions/search")
+@router.get("/v1/sessions/search")
+def search_sessions(
+    q: str = Query(..., min_length=1, description="Full-text search query"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    include_archived: bool = Query(False),
+    include_deleted: bool = Query(False),
+    user_id: Optional[str] = Query(None),
+):
+    """
+    Ranked full-text search across session titles, messages, summaries, and tags.
+
+    Uses SQLite FTS5 (BM25) when available, with highlight/snippet markup.
+    """
+    try:
+        svc = get_session_service()
+        payload = svc.search_sessions(
+            q,
+            user_id=user_id,
+            limit=limit,
+            offset=offset,
+            include_archived=include_archived,
+            include_deleted=include_deleted,
+        )
+        return sanitize_for_json(payload)
+    except Exception as exc:
+        logger.error("Session search failed", extra={"error": str(exc), "q": q})
+        return _server_error("Unable to search sessions", "SESSION_SEARCH_FAILED", str(exc))
 
 
 @router.get("/sessions/recent")

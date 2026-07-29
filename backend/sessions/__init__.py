@@ -1,4 +1,4 @@
-"""Session management (Phase 1 persistence + Phase 3 lifecycle APIs)."""
+"""Session management (Phase 1–4: persistence, lifecycle, FTS search)."""
 
 from backend.sessions.models import AnalysisSession, SessionArtifact, SessionMessage
 from backend.sessions.service import SessionService, get_session_service

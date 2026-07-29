@@ -225,3 +225,47 @@ class ErrorResponse(BaseModel):
     error: str
     details: Optional[Any] = None
     code: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Search
+# ---------------------------------------------------------------------------
+
+
+class SearchHighlights(BaseModel):
+    title: str = ""
+    messages: str = ""
+    summary: str = ""
+    tags: str = ""
+
+
+class SessionSearchHit(BaseModel):
+    session_id: str
+    title: str = ""
+    rank: float = 0.0
+    score: float = 0.0
+    matched_fields: list[str] = Field(default_factory=list)
+    highlights: SearchHighlights = Field(default_factory=SearchHighlights)
+    snippet: str = ""
+    status: str = "active"
+    favorite: bool = False
+    archived: bool = False
+    deleted: bool = False
+    pinned: bool = False
+    dataset_topic: Optional[str] = None
+    dataset_name: Optional[str] = None
+    message_count: int = 0
+    updated_at: Optional[datetime] = None
+    last_activity_at: Optional[datetime] = None
+    last_query: Optional[str] = None
+    tags: list[str] = Field(default_factory=list)
+
+
+class SessionSearchResponse(BaseModel):
+    query: str
+    match_query: str = ""
+    total: int
+    limit: int
+    offset: int
+    engine: str = "fts5"  # fts5 | like | none
+    items: list[SessionSearchHit] = Field(default_factory=list)
