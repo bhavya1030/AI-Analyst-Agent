@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { Inter } from "next/font/google";
+import AppProviders from "@/components/providers/AppProviders";
+import AppShell from "@/components/layout/AppShell";
 import "./globals.css";
 
 const inter = Inter({
@@ -10,15 +12,19 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Analytics Copilot",
+  title: "Analytics Platform · AI Analyst",
   description:
-    "Ask about any topic. Find open data, use your files, or connect a source — then analyze, chart, and forecast.",
+    "Enterprise AI analytics: charts, forecasts, EDA, session memory, and open-data discovery.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={inter.variable} suppressHydrationWarning>
-      <body className={`${inter.className} antialiased`}>{children}</body>
+      <body className={`${inter.className} antialiased`}>
+        <AppProviders>
+          <AppShell>{children}</AppShell>
+        </AppProviders>
+      </body>
     </html>
   );
 }
