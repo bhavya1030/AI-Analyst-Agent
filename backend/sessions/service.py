@@ -35,6 +35,7 @@ EXPORT_FORMAT_VERSION = "1.0"
 _PHASE3_COLUMNS: dict[str, str] = {
     "pinned": "BOOLEAN DEFAULT 0",
     "pin_order": "INTEGER",
+    "conversation_summary": "TEXT",
 }
 
 SORTABLE_FIELDS = frozenset(
@@ -66,8 +67,14 @@ def ensure_session_tables() -> None:
             SessionArtifact.__table__.create(bind=engine, checkfirst=True)
             _schema_ready = True
             logger.info("Session persistence tables ready")
-        # Always reconcile Phase-3 columns (safe if already present)
+        # Always reconcile Phase-3/4 columns (safe if already present)
         _ensure_phase3_columns()
+        try:
+            from backend.sessions.search import ensure_session_fts
+
+            ensure_session_fts()
+        except Exception as exc:
+            logger.warning("Session FTS init skipped", extra={"error": str(exc)})
 
 
 def _ensure_phase3_columns() -> None:
@@ -105,6 +112,54 @@ class SessionService:
 
     def __init__(self) -> None:
         ensure_session_tables()
+
+    @staticmethod
+    def _reindex(session_id: str) -> None:
+        """Refresh FTS document for a session (best-effort)."""
+        try:
+            from backend.sessions.search import upsert_session_fts
+
+            upsert_session_fts(session_id)
+        except Exception as exc:
+            logger.debug(
+                "Session reindex skipped",
+                extra={"session_id": session_id, "error": str(exc)},
+            )
+
+    @staticmethod
+    def _drop_index(session_id: str) -> None:
+        try:
+            from backend.sessions.search import delete_session_fts
+
+            delete_session_fts(session_id)
+        except Exception as exc:
+            logger.debug(
+                "Session FTS delete skipped",
+                extra={"session_id": session_id, "error": str(exc)},
+            )
+
+    def search_sessions(
+        self,
+        q: str,
+        *,
+        user_id: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+        include_archived: bool = False,
+        include_deleted: bool = False,
+    ) -> dict[str, Any]:
+        """Full-text search (Phase 4) — FTS5 with ranking + highlights."""
+        ensure_session_tables()
+        from backend.sessions.search import search_sessions_fts
+
+        return search_sessions_fts(
+            q,
+            user_id=user_id,
+            limit=limit,
+            offset=offset,
+            include_archived=include_archived,
+            include_deleted=include_deleted,
+        )
 
     # ------------------------------------------------------------------
     # CRUD
@@ -156,9 +211,11 @@ class SessionService:
                     db.commit()
                     db.refresh(existing)
                     self._dual_write_legacy(db, existing)
+                    self._reindex(sid)
                     return self._summary_dict(existing)
 
                 # Idempotent create: return existing
+                self._reindex(sid)
                 return self._summary_dict(existing)
 
             row = AnalysisSession(
@@ -185,6 +242,7 @@ class SessionService:
             db.commit()
             db.refresh(row)
             self._dual_write_legacy(db, row)
+            self._reindex(sid)
             logger.info("Session created", extra={"session_id": sid})
             return self._summary_dict(row)
         finally:
@@ -510,6 +568,7 @@ class SessionService:
             db.commit()
             db.refresh(row)
             self._dual_write_legacy(db, row)
+            self._reindex(session_id)
             return self._summary_dict(row)
         finally:
             db.close()
@@ -522,7 +581,9 @@ class SessionService:
         cleaned = (title or "").strip()
         if not cleaned:
             raise ValueError("title must be non-empty")
-        return self.update_session(session_id, title=cleaned)
+        result = self.update_session(session_id, title=cleaned)
+        self._reindex(session_id)
+        return result
 
     def archive_session(self, session_id: str) -> dict[str, Any]:
         ensure_session_tables()
@@ -710,6 +771,7 @@ class SessionService:
             db.commit()
             db.refresh(clone)
             self._dual_write_legacy(db, clone)
+            self._reindex(new_id)
             summary = self._summary_dict(clone)
             summary["source_session_id"] = session_id
             logger.info(
@@ -892,6 +954,7 @@ class SessionService:
             db.commit()
             db.refresh(row)
             self._dual_write_legacy(db, row)
+            self._reindex(new_id)
             summary = self._summary_dict(row)
             summary["imported"] = True
             summary["source_session_id"] = source_id
@@ -962,12 +1025,15 @@ class SessionService:
                 if legacy is not None:
                     db.delete(legacy)
                 db.commit()
+                self._drop_index(sid)
                 return {"session_id": sid, "deleted": True, "hard": True}
 
             row.deleted = True
             row.status = "deleted"
             row.updated_at = _utcnow()
             db.commit()
+            # Keep FTS doc for soft-delete so search can exclude via join filters;
+            # hard delete removes the FTS row above.
             return {"session_id": row.session_id, "deleted": True, "hard": False}
         finally:
             db.close()
@@ -1013,6 +1079,7 @@ class SessionService:
             db.commit()
             db.refresh(msg)
             self._dual_write_legacy(db, row)
+            self._reindex(session_id)
             return {
                 "id": msg.id,
                 "seq": msg.seq,
@@ -1075,6 +1142,13 @@ class SessionService:
 
             row.last_query = question or row.last_query
             row.last_insight = answer
+            # Keep conversation_summary fresh for FTS (lightweight rolling digest)
+            if answer:
+                prev = (row.conversation_summary or "").strip()
+                digest = answer.strip()[:500]
+                row.conversation_summary = (
+                    f"{prev}\n{digest}".strip()[-2000:] if prev else digest
+                )
             row.updated_at = now
             row.last_activity_at = now
 
@@ -1121,6 +1195,7 @@ class SessionService:
             db.commit()
             db.refresh(msg)
             self._dual_write_legacy(db, row)
+            self._reindex(session_id)
 
             logger.info(
                 "Assistant turn persisted",
@@ -1585,6 +1660,7 @@ class SessionService:
                 "message_count": int(row.message_count or 0),
                 "tags": list(row.tags_json or []),
                 "last_query": row.last_query,
+                "conversation_summary": getattr(row, "conversation_summary", None),
             }
         )
 

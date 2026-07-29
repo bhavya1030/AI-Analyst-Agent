@@ -77,6 +77,8 @@ class AnalysisSession(Base):
     tags_json = Column(JSON, nullable=True)
     current_dataset = Column(JSON, nullable=True)
     last_used_columns = Column(JSON, nullable=True)
+    # Phase 4 — searchable conversation summary (auto / manual)
+    conversation_summary = Column(Text, nullable=True)
 
     messages = relationship(
         "SessionMessage",
