@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from backend.config import settings
 from backend.core.logger import get_logger
 from backend.db import get_session, save_session
+from backend.graph.checkpoint_service import get_checkpoint_service
 from backend.graph.workflow import build_graph
 from backend.memory.hierarchy import get_memory_hierarchy
 from backend.sessions.router import router as sessions_router
@@ -32,6 +33,43 @@ app.add_middleware(
 app.include_router(sessions_router)
 graph = build_graph()
 logger = get_logger(__name__)
+
+
+def _graph_config(session_id: str) -> dict:
+    """LangGraph runnable config: thread_id ties checkpoints to the session."""
+    return {"configurable": {"thread_id": session_id or "default"}}
+
+
+def _invoke_graph(state: dict, session_id: str):
+    """Invoke graph with session-scoped checkpointing when available."""
+    try:
+        return graph.invoke(state, _graph_config(session_id))
+    except TypeError:
+        # Compiled without config support
+        return graph.invoke(state)
+    except Exception as exc:
+        # Fall back to non-checkpointed invoke if checkpointer misbehaves
+        msg = str(exc).lower()
+        if "thread" in msg or "checkpointer" in msg or "configurable" in msg:
+            logger.warning(
+                "Checkpointed invoke failed; retrying without config",
+                extra={"session_id": session_id, "error": str(exc)},
+            )
+            return graph.invoke(state)
+        raise
+
+
+def _save_turn_checkpoint(session_id: str, result: dict) -> dict | None:
+    try:
+        return get_checkpoint_service().save_turn_checkpoint(
+            session_id, result, source="turn"
+        )
+    except Exception as exc:
+        logger.warning(
+            "Turn checkpoint save failed",
+            extra={"session_id": session_id, "error": str(exc)},
+        )
+        return None
 
 
 @app.on_event("startup")
@@ -458,7 +496,7 @@ def analyze(session_id: str = "default"):
         )
 
     try:
-        result = graph.invoke(state)
+        result = _invoke_graph(state, session_id)
 
         if result.get("data") is None:
             return JSONResponse(
@@ -508,7 +546,13 @@ def analyze(session_id: str = "default"):
                 extra={"session_id": session_id, "error": str(mem_exc)},
             )
 
-        return _stable_response(result)
+        # Phase 6: durable turn checkpoint (graph + planner, no DataFrames)
+        ckpt = _save_turn_checkpoint(session_id, result)
+        response = _stable_response(result)
+        if isinstance(response, dict) and ckpt:
+            response["checkpoint_id"] = ckpt.get("checkpoint_id")
+            response["checkpoint_saved"] = True
+        return response
     except Exception as exc:
         logger.error(
             "Analysis pipeline failed",
@@ -577,8 +621,39 @@ def ask(
             extra={"session_id": session_id, "error": str(mem_exc)},
         )
 
+    # Phase 6: restore prior checkpoint (crash recovery / continuity) into state
     try:
-        result = graph.invoke(state)
+        from backend.graph.state_codec import merge_checkpoint_into_state
+
+        ckpt_svc = get_checkpoint_service()
+        if ckpt_svc.has_checkpoint(session_id) and not state.get("topic_mismatch"):
+            resumed = ckpt_svc.resume_session(
+                session_id, question=question, base_state=state
+            )
+            if resumed.get("resumable") and resumed.get("graph_state"):
+                # Keep this turn's question / upload path
+                restored = resumed["graph_state"]
+                restored["question"] = question
+                if normalized_file_path:
+                    restored["file_path"] = normalized_file_path
+                state = merge_checkpoint_into_state(
+                    state, restored, prefer_checkpoint=True
+                )
+                state["question"] = question
+                if normalized_file_path:
+                    state["file_path"] = normalized_file_path
+                state["checkpoint_restored"] = True
+                state["restored_checkpoint_id"] = (
+                    (resumed.get("checkpoint") or {}).get("checkpoint_id")
+                )
+    except Exception as ckpt_exc:
+        logger.warning(
+            "Checkpoint restore skipped on ask",
+            extra={"session_id": session_id, "error": str(ckpt_exc)},
+        )
+
+    try:
+        result = _invoke_graph(state, session_id)
 
         # Phase 1: store assistant message + charts/forecast/EDA artifacts
         try:
@@ -634,6 +709,9 @@ def ask(
                 extra={"session_id": session_id, "error": str(mem_exc)},
             )
 
+        # Phase 6: durable turn checkpoint after successful graph run
+        ckpt = _save_turn_checkpoint(session_id, result)
+
         response = _stable_response(result, question=question)
         if isinstance(response, dict):
             response["session_id"] = session_id
@@ -643,6 +721,12 @@ def ask(
             response["memory_hierarchy_loaded"] = bool(
                 state.get("memory_hierarchy_loaded")
             )
+            if ckpt:
+                response["checkpoint_id"] = ckpt.get("checkpoint_id")
+                response["checkpoint_saved"] = True
+            if state.get("checkpoint_restored"):
+                response["checkpoint_restored"] = True
+                response["restored_checkpoint_id"] = state.get("restored_checkpoint_id")
         return response
     except Exception as exc:
         logger.error(

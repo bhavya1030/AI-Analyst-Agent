@@ -135,7 +135,24 @@ def router(state):
     return "generate_insight"
 
 
-def build_graph():
+def build_graph(*, checkpointer=None):
+    """
+    Build and compile the analysis graph.
+
+    Phase 6: when checkpointer is None, uses SessionCheckpointer so turn state
+    can be restored by session_id (thread_id).
+    """
+    if checkpointer is None:
+        try:
+            from backend.graph.checkpointer import get_session_checkpointer
+
+            checkpointer = get_session_checkpointer()
+        except Exception as exc:
+            logger.warning(
+                "Session checkpointer unavailable; running without persistence",
+                extra={"error": str(exc)},
+            )
+            checkpointer = None
 
     builder = StateGraph(dict)
 
@@ -254,4 +271,6 @@ def build_graph():
 
     builder.add_edge("generate_insight", END)
 
+    if checkpointer is not None:
+        return builder.compile(checkpointer=checkpointer)
     return builder.compile()

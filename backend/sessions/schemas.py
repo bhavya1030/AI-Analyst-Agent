@@ -269,3 +269,45 @@ class SessionSearchResponse(BaseModel):
     offset: int
     engine: str = "fts5"  # fts5 | like | none
     items: list[SessionSearchHit] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 — Checkpoints
+# ---------------------------------------------------------------------------
+
+
+class SessionSwitchRequest(BaseModel):
+    from_session_id: Optional[str] = None
+    to_session_id: str = Field(..., min_length=1)
+
+
+class SessionResumeRequest(BaseModel):
+    question: Optional[str] = None
+
+
+class CheckpointSummary(BaseModel):
+    checkpoint_id: str
+    parent_checkpoint_id: Optional[str] = None
+    source: Optional[str] = None
+    status: Optional[str] = None
+    is_latest: bool = False
+    created_at: Optional[datetime] = None
+    dataset_ref: Optional[dict[str, Any]] = None
+    planner_state: Optional[dict[str, Any]] = None
+    has_graph_state: bool = False
+
+
+class SessionCheckpointListResponse(BaseModel):
+    session_id: str
+    total: int
+    items: list[CheckpointSummary] = Field(default_factory=list)
+
+
+class SessionResumeResponse(BaseModel):
+    session_id: str
+    resumable: bool
+    message: str = ""
+    checkpoint: Optional[dict[str, Any]] = None
+    planner_state: dict[str, Any] = Field(default_factory=dict)
+    dataset_ref: dict[str, Any] = Field(default_factory=dict)
+    graph_resumable: bool = False

@@ -19,6 +19,8 @@ from backend.sessions.schemas import (
     SessionImportRequest,
     SessionPinRequest,
     SessionRenameRequest,
+    SessionResumeRequest,
+    SessionSwitchRequest,
     SessionUpdateRequest,
 )
 from backend.sessions.service import SessionNotFoundError, get_session_service
@@ -182,6 +184,35 @@ def recent_sessions(
         return _server_error(
             "Unable to retrieve recent sessions", "SESSION_RECENT_FAILED", str(exc)
         )
+
+
+@router.post("/sessions/switch")
+@router.post("/v1/sessions/switch")
+def switch_session(body: SessionSwitchRequest):
+    """Flush optional from-session continuity and restore to-session checkpoint."""
+    try:
+        from backend.graph.checkpoint_service import get_checkpoint_service
+
+        result = get_checkpoint_service().switch_session(
+            body.from_session_id,
+            body.to_session_id,
+        )
+        # Do not return full graph_state (may include large structures) — summary only
+        payload = {
+            "from_session_id": result.get("from_session_id"),
+            "to_session_id": result.get("to_session_id"),
+            "switched": True,
+            "resumable": bool(result.get("resumable")),
+            "message": result.get("message"),
+            "checkpoint": result.get("checkpoint"),
+            "planner_state": result.get("planner_state") or {},
+            "dataset_ref": result.get("dataset_ref") or {},
+            "graph_resumable": bool(result.get("resumable")),
+        }
+        return sanitize_for_json(payload)
+    except Exception as exc:
+        logger.error("Session switch failed", extra={"error": str(exc)})
+        return _server_error("Unable to switch session", "SESSION_SWITCH_FAILED", str(exc))
 
 
 @router.post("/sessions/import", status_code=201)
@@ -429,3 +460,80 @@ def export_session(session_id: str):
             extra={"session_id": session_id, "error": str(exc)},
         )
         return _server_error("Unable to export session", "SESSION_EXPORT_FAILED", str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 — Checkpoints / resume / crash recovery
+# ---------------------------------------------------------------------------
+
+
+@router.get("/sessions/{session_id}/checkpoints")
+@router.get("/v1/sessions/{session_id}/checkpoints")
+def list_session_checkpoints(
+    session_id: str,
+    limit: int = Query(20, ge=1, le=100),
+):
+    try:
+        from backend.graph.checkpoint_service import get_checkpoint_service
+
+        # Ensure session exists (or was used)
+        payload = get_checkpoint_service().list_session_checkpoints(
+            session_id, limit=limit
+        )
+        return sanitize_for_json(payload)
+    except Exception as exc:
+        logger.error(
+            "Failed to list checkpoints",
+            extra={"session_id": session_id, "error": str(exc)},
+        )
+        return _server_error(
+            "Unable to list checkpoints", "SESSION_CHECKPOINTS_FAILED", str(exc)
+        )
+
+
+@router.post("/sessions/{session_id}/resume")
+@router.post("/v1/sessions/{session_id}/resume")
+def resume_session(
+    session_id: str,
+    body: SessionResumeRequest | None = Body(default=None),
+):
+    """
+    Crash recovery: restore latest graph + planner checkpoint for the session.
+
+    Returns planner_state and dataset_ref; full frames are reloaded server-side
+    on the next /ask for this session_id.
+    """
+    body = body or SessionResumeRequest()
+    try:
+        from backend.graph.checkpoint_service import get_checkpoint_service
+
+        result = get_checkpoint_service().resume_session(
+            session_id, question=body.question
+        )
+        gs = result.get("graph_state") or {}
+        # Strip non-JSON frame objects for HTTP response
+        safe_preview = {
+            k: v
+            for k, v in gs.items()
+            if k not in {"data", "last_dataset"}
+            and type(v).__name__ not in {"DataFrame", "Series"}
+        }
+        payload = {
+            "session_id": session_id,
+            "resumable": bool(result.get("resumable")),
+            "message": result.get("message") or "",
+            "checkpoint": result.get("checkpoint"),
+            "planner_state": result.get("planner_state") or {},
+            "dataset_ref": result.get("dataset_ref") or {},
+            "graph_resumable": bool(result.get("resumable")),
+            "graph_state_preview": sanitize_for_json(safe_preview),
+        }
+        return sanitize_for_json(payload)
+    except Exception as exc:
+        logger.error(
+            "Failed to resume session",
+            extra={"session_id": session_id, "error": str(exc)},
+        )
+        return _server_error(
+            "Unable to resume session", "SESSION_RESUME_FAILED", str(exc)
+        )
