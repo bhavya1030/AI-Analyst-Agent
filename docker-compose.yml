@@ -1,0 +1,149 @@
+# =============================================================================
+# AI Analyst Agent — Docker Compose
+# Matches: FastAPI backend (root Dockerfile) + Next.js UI + optional Ollama
+# No Redis / PostgreSQL / MongoDB (not used by this codebase)
+# =============================================================================
+
+name: ai-analyst-agent
+
+services:
+  # ---------------------------------------------------------------------------
+  # Backend — FastAPI + LangGraph (backend.main:app)
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${BACKEND_IMAGE:-ai-analyst-api:latest}
+    container_name: ai-analyst-backend
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Persistence (SQLite file lives under DATA_DIR so one volume covers DB + files)
+      DATABASE_URL: ${DATABASE_URL:-sqlite:////app/data/memory.db}
+      DATA_DIR: ${DATA_DIR:-/app/data}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      FORECAST_HORIZON: ${FORECAST_HORIZON:-10}
+      EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME:-sentence-transformers/all-MiniLM-L6-v2}
+      SEMANTIC_SEARCH_TOP_K: ${SEMANTIC_SEARCH_TOP_K:-5}
+      SEMANTIC_MIN_SCORE: ${SEMANTIC_MIN_SCORE:-0.35}
+      CHART_DEFAULT_LIMIT: ${CHART_DEFAULT_LIMIT:-4}
+      # LLM flags (default off — rule-based path; enable only with ollama profile)
+      USE_LLM_INTENT: ${USE_LLM_INTENT:-false}
+      USE_LLM_PLANNER: ${USE_LLM_PLANNER:-false}
+      USE_LLM_TOPIC: ${USE_LLM_TOPIC:-false}
+      USE_LLM_LEARN: ${USE_LLM_LEARN:-false}
+      LEARN_DATASETS: ${LEARN_DATASETS:-true}
+      # Docker DNS name when ollama profile is running; harmless if Ollama is down
+      OLLAMA_SERVER_URL: ${OLLAMA_SERVER_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b}
+      # Keep embedding / HF caches on the data volume
+      HF_HOME: ${HF_HOME:-/app/data/.cache/huggingface}
+      TRANSFORMERS_CACHE: ${TRANSFORMERS_CACHE:-/app/data/.cache/huggingface}
+      SENTENCE_TRANSFORMERS_HOME: ${SENTENCE_TRANSFORMERS_HOME:-/app/data/.cache/sentence-transformers}
+      HOME: /home/appuser
+    ports:
+      - "${BACKEND_HOST_PORT:-8000}:8000"
+    volumes:
+      # Covers: SQLite (memory.db), uploads, data/datasets, data/semantic, model cache
+      - backend_data:/app/data
+    networks:
+      - ai_analyst_net
+    healthcheck:
+      # Runtime image has Python, not curl
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=5)",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  # ---------------------------------------------------------------------------
+  # Frontend — Next.js 14 standalone (analytics-copilot-ui)
+  # NEXT_PUBLIC_API_URL is a build-arg (inlined into client bundle)
+  # Must be a browser-reachable URL (usually host localhost), not "backend:8000"
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./analytics-copilot-ui
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    image: ${FRONTEND_IMAGE:-ai-analyst-ui:latest}
+    container_name: ai-analyst-frontend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: ${FRONTEND_PORT:-3000}
+      HOSTNAME: 0.0.0.0
+    ports:
+      - "${FRONTEND_HOST_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - ai_analyst_net
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://127.0.0.1:3000',(r)=>process.exit(r.statusCode&&r.statusCode<500?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  # ---------------------------------------------------------------------------
+  # Optional Ollama — enable with: docker compose --profile ollama up
+  # Not required for default rule-based analytics path
+  # ---------------------------------------------------------------------------
+  ollama:
+    profiles:
+      - ollama
+    image: ollama/ollama:${OLLAMA_IMAGE_TAG:-latest}
+    container_name: ai-analyst-ollama
+    restart: unless-stopped
+    environment:
+      OLLAMA_HOST: ${OLLAMA_HOST:-0.0.0.0:11434}
+    ports:
+      - "${OLLAMA_HOST_PORT:-11434}:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    networks:
+      - ai_analyst_net
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+
+networks:
+  ai_analyst_net:
+    name: ${NETWORK_NAME:-ai_analyst_net}
+    driver: bridge
+
+volumes:
+  # SQLite + uploads + dataset library + semantic index + ST/HF model cache
+  # Layout under volume:
+  #   /app/data/memory.db
+  #   /app/data/<uploaded-files>
+  #   /app/data/datasets/     (LocalFilesystemStorage)
+  #   /app/data/semantic/     (vector index)
+  #   /app/data/.cache/       (sentence-transformers / Hugging Face)
+  backend_data:
+    name: ${BACKEND_DATA_VOLUME:-ai_analyst_backend_data}
+
+  # Ollama model weights (profile: ollama only)
+  ollama_models:
+    name: ${OLLAMA_MODELS_VOLUME:-ai_analyst_ollama_models}

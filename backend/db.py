@@ -75,6 +75,20 @@ def ensure_session_memory_schema():
 
 ensure_session_memory_schema()
 
+
+def ensure_analysis_session_schema():
+    """Create Phase-1 session tables (analysis_sessions, messages, artifacts)."""
+    try:
+        from backend.sessions.service import ensure_session_tables
+
+        ensure_session_tables()
+    except Exception:
+        # Avoid import cycles / partial installs breaking legacy paths
+        pass
+
+
+ensure_analysis_session_schema()
+
 _UNSET = object()
 
 

@@ -10,8 +10,10 @@ from fastapi.responses import JSONResponse
 
 from backend.config import settings
 from backend.core.logger import get_logger
-from backend.db import get_session, list_sessions, save_session
+from backend.db import get_session, save_session
 from backend.graph.workflow import build_graph
+from backend.sessions.router import router as sessions_router
+from backend.sessions.service import get_session_service
 from backend.startup.ollama_validator import get_ollama_status, validate_model_inference
 from backend.utils.dataset_loader import load_dataset
 from backend.utils.json_safe import sanitize_for_json
@@ -26,6 +28,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(sessions_router)
 graph = build_graph()
 logger = get_logger(__name__)
 
@@ -414,6 +417,15 @@ def upload_dataset(file: UploadFile = File(...)):
 
 @app.get("/analyze")
 def analyze(session_id: str = "default"):
+    session_svc = get_session_service()
+    try:
+        session_svc.ensure_session(session_id)
+    except Exception as exc:
+        logger.warning(
+            "Session ensure failed on analyze",
+            extra={"session_id": session_id, "error": str(exc)},
+        )
+
     session = get_session(session_id)
     state = _build_state(session=session, question="analyze dataset")
 
@@ -431,15 +443,28 @@ def analyze(session_id: str = "default"):
                 ),
             )
 
-        save_session(
-            session_id=session_id,
-            last_column=result.get("last_column_used"),
-            last_columns=result.get("last_columns_used") or [],
-            last_chart_type=result.get("last_chart_type"),
-            last_intent=result.get("last_intent"),
-            last_operation=result.get("last_operation"),
-            dataset_topic=result.get("dataset_topic"),
-        )
+        # Phase 1: durable session turn + legacy dual-write
+        try:
+            session_svc.append_user_message(session_id, "analyze dataset")
+            session_svc.record_assistant_turn(
+                session_id,
+                question="analyze dataset",
+                result=result,
+            )
+        except Exception as persist_exc:
+            logger.warning(
+                "Session persistence failed on analyze; falling back to legacy save",
+                extra={"session_id": session_id, "error": str(persist_exc)},
+            )
+            save_session(
+                session_id=session_id,
+                last_column=result.get("last_column_used"),
+                last_columns=result.get("last_columns_used") or [],
+                last_chart_type=result.get("last_chart_type"),
+                last_intent=result.get("last_intent"),
+                last_operation=result.get("last_operation"),
+                dataset_topic=result.get("dataset_topic"),
+            )
 
         return _stable_response(result)
     except Exception as exc:
@@ -463,8 +488,20 @@ def ask(
     session_id: str = "default",
     file_path: str | None = None,
 ):
-    session = get_session(session_id)
+    session_svc = get_session_service()
     normalized_file_path = _normalize_dataset_reference(file_path)
+
+    # Phase 1: ensure durable session + append user message before the graph run
+    try:
+        session_svc.ensure_session(session_id)
+        session_svc.append_user_message(session_id, question)
+    except Exception as exc:
+        logger.warning(
+            "Session user-message persist failed; continuing ask",
+            extra={"session_id": session_id, "error": str(exc)},
+        )
+
+    session = get_session(session_id)
     state = _build_state(
         session=session,
         question=question,
@@ -477,33 +514,53 @@ def ask(
     try:
         result = graph.invoke(state)
 
-        save_kwargs = {
-            "last_column": result.get("last_column_used"),
-            "last_columns": result.get("last_columns_used") or [],
-            "last_chart_type": result.get("last_chart_type"),
-            "last_intent": result.get("last_intent"),
-            "last_operation": result.get("last_operation"),
-            "last_forecast_target": result.get("last_forecast_target"),
-            "last_query": question,
-            "last_insight": result.get("answer"),
-            "eda_summary": result.get("dataset_profile") or {},
-            "dataset_topic": result.get("dataset_topic"),
-        }
+        # Phase 1: store assistant message + charts/forecast/EDA artifacts
+        try:
+            turn = session_svc.record_assistant_turn(
+                session_id,
+                question=question,
+                result=result,
+                file_path=normalized_file_path,
+            )
+        except Exception as persist_exc:
+            logger.warning(
+                "Session assistant-turn persist failed; falling back to legacy save",
+                extra={"session_id": session_id, "error": str(persist_exc)},
+            )
+            turn = None
+            save_kwargs = {
+                "last_column": result.get("last_column_used"),
+                "last_columns": result.get("last_columns_used") or [],
+                "last_chart_type": result.get("last_chart_type"),
+                "last_intent": result.get("last_intent"),
+                "last_operation": result.get("last_operation"),
+                "last_forecast_target": result.get("last_forecast_target"),
+                "last_query": question,
+                "last_insight": result.get("answer"),
+                "eda_summary": result.get("dataset_profile") or {},
+                "dataset_topic": result.get("dataset_topic"),
+            }
 
-        if normalized_file_path and result.get("data") is not None:
-            if _is_remote_reference(normalized_file_path):
+            if normalized_file_path and result.get("data") is not None:
+                if _is_remote_reference(normalized_file_path):
+                    save_kwargs["dataset_path"] = None
+                    save_kwargs["dataset_url"] = normalized_file_path
+                elif not result.get("dataset_url"):
+                    save_kwargs["dataset_path"] = normalized_file_path
+                    save_kwargs["dataset_url"] = None
+            elif result.get("dataset_url") and result.get("data") is not None:
                 save_kwargs["dataset_path"] = None
-                save_kwargs["dataset_url"] = normalized_file_path
-            elif not result.get("dataset_url"):
-                save_kwargs["dataset_path"] = normalized_file_path
-                save_kwargs["dataset_url"] = None
-        elif result.get("dataset_url") and result.get("data") is not None:
-            save_kwargs["dataset_path"] = None
-            save_kwargs["dataset_url"] = result["dataset_url"]
+                save_kwargs["dataset_url"] = result["dataset_url"]
 
-        save_session(session_id=session_id, **save_kwargs)
+            save_session(session_id=session_id, **save_kwargs)
 
-        return _stable_response(result, question=question)
+        response = _stable_response(result, question=question)
+        if isinstance(response, dict):
+            response["session_id"] = session_id
+            if turn:
+                response["message_id"] = turn.get("message_id")
+                response["artifact_ids"] = turn.get("artifact_ids") or []
+        return response
     except Exception as exc:
         logger.error(
             "Ask pipeline failed",
@@ -515,58 +572,4 @@ def ask(
                 "error": "Pipeline execution failed",
                 "details": str(exc),
             },
-        )
-
-
-@app.get("/sessions")
-def sessions():
-    try:
-        return list_sessions()
-    except Exception as exc:
-        logger.error(
-            "Failed to load session list",
-            extra={"action": "sessions", "error": str(exc)},
-        )
-        return JSONResponse(
-            status_code=500,
-            content={"error": "Unable to retrieve sessions"},
-        )
-
-
-@app.get("/sessions/{session_id}")
-def session_detail(session_id: str):
-    """Return stored memory for a session so the UI can reopen it in Analyze."""
-    try:
-        session = get_session(session_id)
-        if session is None:
-            return JSONResponse(
-                status_code=404,
-                content={"error": f"Session '{session_id}' not found"},
-            )
-
-        return sanitize_for_json(
-            {
-                "session_id": session.session_id,
-                "dataset_path": session.dataset_path or "",
-                "dataset_url": session.dataset_url or "",
-                "dataset_topic": session.dataset_topic or "",
-                "last_query": session.last_query or "",
-                "last_insight": session.last_insight or "",
-                "last_column": session.last_column or "",
-                "last_columns": session.last_columns or [],
-                "last_chart_type": session.last_chart_type or "",
-                "last_intent": session.last_intent or "",
-                "last_operation": session.last_operation or "",
-                "last_forecast_target": session.last_forecast_target or "",
-                "eda_summary": session.eda_summary or {},
-            }
-        )
-    except Exception as exc:
-        logger.error(
-            "Failed to load session detail",
-            extra={"action": "session_detail", "session_id": session_id, "error": str(exc)},
-        )
-        return JSONResponse(
-            status_code=500,
-            content={"error": "Unable to retrieve session"},
         )
