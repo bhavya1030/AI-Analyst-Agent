@@ -164,15 +164,30 @@ class MemoryHierarchyService:
             if sess is not None:
                 summary = getattr(sess, "conversation_summary", None) or ""
 
-            rows = (
-                db.query(SessionMessage)
-                .filter(SessionMessage.session_id == session_id)
-                .order_by(SessionMessage.seq.desc())
-                .limit(self.l1_window)
-                .all()
+            # Prefer recent non-summarized messages (Phase 7 keeps these intact)
+            q = db.query(SessionMessage).filter(
+                SessionMessage.session_id == session_id
             )
-            # reverse to chronological
-            rows = list(reversed(rows))
+            try:
+                # is_summarized may be missing on very old DBs before migration
+                active = (
+                    q.filter(SessionMessage.is_summarized.is_(False))
+                    .order_by(SessionMessage.seq.desc())
+                    .limit(self.l1_window)
+                    .all()
+                )
+            except Exception:
+                active = []
+            if active:
+                rows = list(reversed(active))
+            else:
+                rows = list(
+                    reversed(
+                        q.order_by(SessionMessage.seq.desc())
+                        .limit(self.l1_window)
+                        .all()
+                    )
+                )
             messages = [
                 ConversationMessage(
                     role=m.role or "user",

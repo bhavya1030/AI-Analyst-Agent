@@ -130,12 +130,16 @@ class SessionMessage(Base):
 
     # Structured assistant payload refs / light metadata
     payload = Column(JSON, nullable=True)
+    # Phase 7 — folded into conversation_summary; recent messages stay False
+    is_summarized = Column(Boolean, nullable=False, default=False)
+    summary_group_id = Column(String(36), nullable=True, index=True)
 
     session = relationship("AnalysisSession", back_populates="messages")
 
     __table_args__ = (
         UniqueConstraint("session_id", "seq", name="uq_session_msg_seq"),
         Index("ix_session_messages_session_seq", "session_id", "seq"),
+        Index("ix_session_messages_summarized", "session_id", "is_summarized"),
     )
 
 
