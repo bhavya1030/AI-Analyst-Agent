@@ -91,8 +91,28 @@ def conversation_context_agent(state):
     if state.get("dataset_url") and not state.get("dataset_topic"):
         state["dataset_topic"] = state.get("dataset_topic") or "active session dataset"
 
+    # Phase 5: prefer L2 session memory / L3 dataset hints when subject is weak
+    session_mem = state.get("session_memory") or {}
+    if isinstance(session_mem, dict):
+        if not state.get("last_column_used") and session_mem.get("last_column"):
+            state["last_column_used"] = session_mem.get("last_column")
+        if not state.get("last_columns_used") and session_mem.get("last_columns"):
+            state["last_columns_used"] = list(session_mem.get("last_columns") or [])
+        if not state.get("dataset_topic") and session_mem.get("dataset_topic"):
+            if not state.get("topic_mismatch"):
+                state["dataset_topic"] = session_mem.get("dataset_topic")
+
     lowered = question.lower()
     subject = _describe_subject(state)
+    # Enrich subject from conversation memory summary when generic
+    if subject in {"the dataset", "the active dataset"}:
+        summary = (state.get("conversation_summary") or "").strip()
+        topic = (state.get("dataset_topic") or session_mem.get("dataset_topic") or "").strip()
+        if topic:
+            subject = topic
+        elif summary:
+            subject = summary[:80]
+
     resolved = None
 
     for phrase, template in FOLLOW_UP_MAPPINGS.items():

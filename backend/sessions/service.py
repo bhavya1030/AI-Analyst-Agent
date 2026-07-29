@@ -36,6 +36,7 @@ _PHASE3_COLUMNS: dict[str, str] = {
     "pinned": "BOOLEAN DEFAULT 0",
     "pin_order": "INTEGER",
     "conversation_summary": "TEXT",
+    "memory_state": "JSON",
 }
 
 SORTABLE_FIELDS = frozenset(

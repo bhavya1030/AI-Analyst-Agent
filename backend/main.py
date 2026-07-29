@@ -12,6 +12,7 @@ from backend.config import settings
 from backend.core.logger import get_logger
 from backend.db import get_session, save_session
 from backend.graph.workflow import build_graph
+from backend.memory.hierarchy import get_memory_hierarchy
 from backend.sessions.router import router as sessions_router
 from backend.sessions.service import get_session_service
 from backend.startup.ollama_validator import get_ollama_status, validate_model_inference
@@ -313,6 +314,14 @@ def _build_state(session, question=None, file_path=None):
         "session_dataset_topic": getattr(session, "dataset_topic", None)
         if session is not None
         else None,
+        # Phase 5 placeholders (filled by MemoryHierarchyService.inject_into_state)
+        "memory": {},
+        "conversation_memory": {},
+        "session_memory": {},
+        "dataset_memory": {},
+        "knowledge_memory": {},
+        "memory_hierarchy_loaded": False,
+        "recent_messages": [],
     }
 
 
@@ -418,6 +427,7 @@ def upload_dataset(file: UploadFile = File(...)):
 @app.get("/analyze")
 def analyze(session_id: str = "default"):
     session_svc = get_session_service()
+    memory_svc = get_memory_hierarchy()
     try:
         session_svc.ensure_session(session_id)
     except Exception as exc:
@@ -428,6 +438,24 @@ def analyze(session_id: str = "default"):
 
     session = get_session(session_id)
     state = _build_state(session=session, question="analyze dataset")
+    state["session_id"] = session_id
+
+    # Phase 5: load → inject memory hierarchy before graph
+    memory_bundle = None
+    try:
+        memory_bundle = memory_svc.load(
+            session_id,
+            dataset_topic=getattr(session, "dataset_topic", None) if session else None,
+            dataset_url=getattr(session, "dataset_url", None) if session else None,
+            dataset_path=getattr(session, "dataset_path", None) if session else None,
+            question="analyze dataset",
+        )
+        state = memory_svc.inject_into_state(state, memory_bundle)
+    except Exception as mem_exc:
+        logger.warning(
+            "Memory hierarchy load failed on analyze",
+            extra={"session_id": session_id, "error": str(mem_exc)},
+        )
 
     try:
         result = graph.invoke(state)
@@ -466,6 +494,20 @@ def analyze(session_id: str = "default"):
                 dataset_topic=result.get("dataset_topic"),
             )
 
+        # Phase 5: persist updated hierarchy
+        try:
+            memory_svc.persist(
+                session_id,
+                result,
+                question="analyze dataset",
+                prior=memory_bundle,
+            )
+        except Exception as mem_exc:
+            logger.warning(
+                "Memory hierarchy persist failed on analyze",
+                extra={"session_id": session_id, "error": str(mem_exc)},
+            )
+
         return _stable_response(result)
     except Exception as exc:
         logger.error(
@@ -489,6 +531,7 @@ def ask(
     file_path: str | None = None,
 ):
     session_svc = get_session_service()
+    memory_svc = get_memory_hierarchy()
     normalized_file_path = _normalize_dataset_reference(file_path)
 
     # Phase 1: ensure durable session + append user message before the graph run
@@ -507,9 +550,32 @@ def ask(
         question=question,
         file_path=normalized_file_path,
     )
+    state["session_id"] = session_id
 
     if normalized_file_path:
         state["file_path"] = normalized_file_path
+
+    # Phase 5: load → inject memory hierarchy into LangGraph state
+    memory_bundle = None
+    try:
+        memory_bundle = memory_svc.load(
+            session_id,
+            question=question,
+            dataset_topic=getattr(session, "dataset_topic", None) if session else None,
+            dataset_url=getattr(session, "dataset_url", None) if session else None,
+            dataset_path=(
+                normalized_file_path
+                if normalized_file_path and not _is_remote_reference(normalized_file_path)
+                else (getattr(session, "dataset_path", None) if session else None)
+            ),
+            dataset_id=None,
+        )
+        state = memory_svc.inject_into_state(state, memory_bundle)
+    except Exception as mem_exc:
+        logger.warning(
+            "Memory hierarchy load failed on ask",
+            extra={"session_id": session_id, "error": str(mem_exc)},
+        )
 
     try:
         result = graph.invoke(state)
@@ -554,12 +620,29 @@ def ask(
 
             save_session(session_id=session_id, **save_kwargs)
 
+        # Phase 5: persist L2 session + L3 dataset memory after the turn
+        try:
+            memory_svc.persist(
+                session_id,
+                result,
+                question=question,
+                prior=memory_bundle,
+            )
+        except Exception as mem_exc:
+            logger.warning(
+                "Memory hierarchy persist failed on ask",
+                extra={"session_id": session_id, "error": str(mem_exc)},
+            )
+
         response = _stable_response(result, question=question)
         if isinstance(response, dict):
             response["session_id"] = session_id
             if turn:
                 response["message_id"] = turn.get("message_id")
                 response["artifact_ids"] = turn.get("artifact_ids") or []
+            response["memory_hierarchy_loaded"] = bool(
+                state.get("memory_hierarchy_loaded")
+            )
         return response
     except Exception as exc:
         logger.error(
