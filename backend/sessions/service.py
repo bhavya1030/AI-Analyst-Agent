@@ -1027,6 +1027,12 @@ class SessionService:
                     db.delete(legacy)
                 db.commit()
                 self._drop_index(sid)
+                try:
+                    from backend.graph.checkpoint_service import get_checkpoint_service
+
+                    get_checkpoint_service().delete_session_checkpoints(sid)
+                except Exception:
+                    pass
                 return {"session_id": sid, "deleted": True, "hard": True}
 
             row.deleted = True
