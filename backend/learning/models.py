@@ -67,4 +67,5 @@ class LearningInput:
     entity_column: Optional[str] = None
     countries_regions: list[str] = field(default_factory=list)
     topic_keywords: list[str] = field(default_factory=list)
+    metrics: list[str] = field(default_factory=list)
     dataset_type: str = "unknown"

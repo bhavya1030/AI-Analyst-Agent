@@ -403,7 +403,12 @@ def _stable_response(result, question=None, timings=None):
         "question": question or "",
         "answer": result.get("answer") or "",
         "dataset_summary": dataset_profile,
-        "dataset_topic": result.get("dataset_topic") or "",
+        "dataset_topic": result.get("dataset_topic") or result.get("dataset_name") or "",
+        "dataset_name": result.get("dataset_name")
+        or result.get("dataset_title")
+        or (result.get("dataset_metadata") or {}).get("title")
+        or result.get("dataset_topic")
+        or "",
         "charts": charts,
         "generated_charts": charts,
         "chart": result.get("chart") or {},
@@ -916,7 +921,9 @@ def ask(
                     "last_query": question,
                     "last_insight": result.get("answer"),
                     "eda_summary": result.get("dataset_profile") or {},
-                    "dataset_topic": result.get("dataset_topic"),
+                    "dataset_topic": result.get("dataset_topic")
+                    or result.get("dataset_name")
+                    or result.get("dataset_title"),
                 }
 
                 if normalized_file_path and result.get("data") is not None:
