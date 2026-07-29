@@ -89,6 +89,19 @@ def ensure_analysis_session_schema():
 
 ensure_analysis_session_schema()
 
+
+def ensure_analysis_cache_schema():
+    """Create Phase-2 durable AnalysisCache table."""
+    try:
+        from backend.cache.analysis_cache import ensure_analysis_cache_table
+
+        ensure_analysis_cache_table()
+    except Exception:
+        pass
+
+
+ensure_analysis_cache_schema()
+
 _UNSET = object()
 
 
