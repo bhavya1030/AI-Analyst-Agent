@@ -200,6 +200,18 @@ def _extract_topic_from_question(question: str) -> str:
     if not question:
         return ""
 
+    # Shared topic detection (filename/question heuristics)
+    try:
+        from backend.metadata.topic_detection import topic_from_question
+
+        shared = topic_from_question(question)
+        if shared:
+            # Keep lower-case style for search keys when phrase is multi-word free form
+            # but preserve display-friendly country/metric titles from compose.
+            return shared[:120]
+    except Exception:
+        pass
+
     normalized = question.lower()
     # Preserve known subject tokens before stripping filler (gold rate → gold).
     kept = [tok for tok in _TOPIC_KEEP_TOKENS if re.search(rf"(?<![a-z0-9]){re.escape(tok)}(?![a-z0-9])", normalized)]
@@ -360,6 +372,39 @@ def _fallback_topic(state, question: str = ""):
         return state
 
     columns = state.get("columns") or []
+    file_hint = state.get("file_path") or state.get("local_path") or state.get("dataset_url")
+
+    # Prefer structure-aware topic detection (filename + columns + values)
+    try:
+        from backend.metadata.topic_detection import topic_from_columns_and_values
+        from backend.metadata.models import is_placeholder_label
+
+        sample_values: list = []
+        data = state.get("data")
+        if data is not None and hasattr(data, "columns"):
+            for col in list(data.columns)[:3]:
+                try:
+                    sample_values.extend(
+                        [str(v) for v in data[col].dropna().astype(str).head(20).tolist()]
+                    )
+                except Exception:
+                    pass
+
+        structured = topic_from_columns_and_values(
+            columns,
+            sample_values=sample_values,
+            filename=str(file_hint) if file_hint else None,
+            question=question or state.get("question"),
+        )
+        if structured and not is_placeholder_label(structured):
+            state["dataset_topic"] = structured
+            state["dataset_name"] = structured
+            state["search_queries"] = _build_search_queries(structured, question)
+            _extract_focus_entities(state, question or state.get("question") or "")
+            return state
+    except Exception as exc:
+        logger.warning("Structured topic detection failed", extra={"error": str(exc)})
+
     if not columns:
         # Still allow open-world search using the raw question text.
         raw = (question or state.get("question") or "").strip()
