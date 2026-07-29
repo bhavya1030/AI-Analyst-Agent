@@ -19,7 +19,9 @@ except Exception:
     PolynomialFeatures = None
     SKLEARN_AVAILABLE = False
 
-from backend.cache.dataset_cache import get_forecast, set_forecast
+from backend.cache.analysis_cache import KIND_FORECAST, get_analysis_cache
+from backend.cache.dataset_cache import get_forecast, remember_fingerprint, set_forecast
+from backend.cache.fingerprint import compute_dataset_fingerprint
 from backend.config import settings
 from backend.core.logger import get_logger
 from backend.errors.error_types import FORECAST_FAILED, NO_NUMERIC_COLUMN, NO_TIME_COLUMN
@@ -126,15 +128,48 @@ def forecasting_agent(state):
         return state
 
     value_col = numeric_cols[0]
-    reference = state.get("dataset_url") or state.get("file_path") or "default"
-    cached_forecast = get_forecast(reference, value_col)
-    if cached_forecast is not None:
-        state["forecast"] = cached_forecast["forecast"]
-        state["forecast_chart"] = cached_forecast["forecast_chart"]
+    reference = state.get("dataset_url") or state.get("file_path") or state.get("local_path")
+    fingerprint = state.get("dataset_fingerprint") or compute_dataset_fingerprint(
+        df, reference
+    )
+    state["dataset_fingerprint"] = fingerprint
+    if reference:
+        remember_fingerprint(reference, fingerprint)
+
+    horizon = int(getattr(settings, "FORECAST_HORIZON", 10) or 10)
+    params = {
+        "target": value_col,
+        "time_col": time_col,
+        "horizon": horizon,
+        "model": "prophet" if PROPHET_AVAILABLE else "regression",
+    }
+
+    # Durable cache first
+    durable = get_analysis_cache().get(KIND_FORECAST, fingerprint, params)
+    if durable is None:
+        durable = get_forecast(
+            reference,
+            value_col,
+            fingerprint=fingerprint,
+            horizon=horizon,
+            time_col=time_col,
+        )
+
+    if durable is not None:
+        state["forecast"] = durable.get("forecast") or []
+        state["forecast_chart"] = durable.get("forecast_chart")
         state["last_forecast_target"] = value_col
+        state["last_chart_type"] = "forecast"
+        state["last_columns_used"] = [time_col, value_col]
+        state["forecast_from_cache"] = True
         logger.info(
-            "Forecast served from cache",
-            extra={"action": "forecast_data", "dataset": reference, "target": value_col},
+            "Forecast served from durable cache",
+            extra={
+                "action": "forecast_data",
+                "dataset": reference,
+                "target": value_col,
+                "fingerprint": fingerprint[:16],
+            },
         )
         return state
 
@@ -189,14 +224,30 @@ def forecasting_agent(state):
         state["last_forecast_target"] = value_col
         state["last_chart_type"] = "forecast"
         state["last_columns_used"] = [time_col, value_col]
-        set_forecast(reference, value_col, state["forecast"], state["forecast_chart"])
+        state["forecast_from_cache"] = False
+
+        payload = {
+            "forecast": state["forecast"],
+            "forecast_chart": state["forecast_chart"],
+        }
+        get_analysis_cache().put(KIND_FORECAST, fingerprint, payload, params)
+        set_forecast(
+            reference,
+            value_col,
+            state["forecast"],
+            state["forecast_chart"],
+            fingerprint=fingerprint,
+            horizon=horizon,
+            time_col=time_col,
+        )
 
         logger.info(
-            "Forecast generated",
+            "Forecast generated and cached",
             extra={
                 "action": "forecast_data",
                 "dataset": reference,
                 "target": value_col,
+                "fingerprint": fingerprint[:16],
                 "duration_ms": round((time.perf_counter() - start_time) * 1000, 3),
             },
         )
