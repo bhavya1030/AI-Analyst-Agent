@@ -102,6 +102,19 @@ def ensure_analysis_cache_schema():
 
 ensure_analysis_cache_schema()
 
+
+def ensure_auth_users_schema():
+    """Create Phase-8 users table + anonymous seed."""
+    try:
+        from backend.auth.service import ensure_auth_schema
+
+        ensure_auth_schema()
+    except Exception:
+        pass
+
+
+ensure_auth_users_schema()
+
 _UNSET = object()
 
 

@@ -25,7 +25,11 @@ class SessionCreateRequest(BaseModel):
     dataset_path: Optional[str] = None
     dataset_url: Optional[str] = None
     tags: list[str] = Field(default_factory=list)
-    user_id: str = "anonymous"
+    # Deprecated for isolation: server uses AuthUser from headers/JWT (Phase 8).
+    user_id: Optional[str] = Field(
+        default=None,
+        description="Ignored for ownership; identity comes from X-User-Id / JWT.",
+    )
 
 
 class SessionUpdateRequest(BaseModel):
@@ -76,7 +80,8 @@ class SessionImportRequest(BaseModel):
         description="Optional new session id; generated if omitted.",
     )
     title: Optional[str] = Field(default=None, max_length=512)
-    user_id: str = "anonymous"
+    # Ownership assigned from AuthUser (Phase 8); body field ignored.
+    user_id: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +135,7 @@ class SessionSummary(BaseModel):
     message_count: int = 0
     tags: list[str] = Field(default_factory=list)
     last_query: Optional[str] = None
+    user_id: str = "anonymous"
 
 
 class SessionListResponse(BaseModel):
