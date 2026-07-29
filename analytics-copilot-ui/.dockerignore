@@ -1,0 +1,17 @@
+# Keep build context small and avoid overwriting deps with host node_modules
+node_modules
+.next
+.git
+.gitignore
+*.md
+Dockerfile
+.dockerignore
+coverage
+.jest
+playwright-report
+test-results
+tests
+*.tsbuildinfo
+.env*
+.DS_Store
+npm-debug.log*
