@@ -79,6 +79,8 @@ class AnalysisSession(Base):
     last_used_columns = Column(JSON, nullable=True)
     # Phase 4 — searchable conversation summary (auto / manual)
     conversation_summary = Column(Text, nullable=True)
+    # Phase 5 — L2 session memory blob (filters, metrics, profile slim, etc.)
+    memory_state = Column(JSON, nullable=True)
 
     messages = relationship(
         "SessionMessage",
