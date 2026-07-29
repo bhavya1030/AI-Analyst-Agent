@@ -1,4 +1,4 @@
-"""Pydantic request/response schemas for session APIs (Phase 1)."""
+"""Pydantic request/response schemas for session APIs (Phase 1 + Phase 3)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,11 @@ from datetime import datetime
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+# ---------------------------------------------------------------------------
+# Requests
+# ---------------------------------------------------------------------------
 
 
 class SessionCreateRequest(BaseModel):
@@ -32,7 +37,51 @@ class SessionUpdateRequest(BaseModel):
     dataset_topic: Optional[str] = None
     tags: Optional[list[str]] = None
     favorite: Optional[bool] = None
+    pinned: Optional[bool] = None
     status: Optional[Literal["active", "archived"]] = None
+
+
+class SessionRenameRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=512)
+
+
+class SessionFavoriteRequest(BaseModel):
+    favorite: bool = True
+
+
+class SessionPinRequest(BaseModel):
+    pinned: bool = True
+    pin_order: Optional[int] = Field(
+        default=None,
+        description="Optional sort rank among pinned sessions (lower = higher).",
+    )
+
+
+class SessionDuplicateRequest(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=512)
+    include_messages: bool = True
+    include_artifacts: bool = True
+
+
+class SessionImportRequest(BaseModel):
+    """Import a previously exported session bundle."""
+
+    bundle: dict[str, Any] = Field(
+        ...,
+        description="Export payload from GET /sessions/{id}/export",
+    )
+    session_id: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="Optional new session id; generated if omitted.",
+    )
+    title: Optional[str] = Field(default=None, max_length=512)
+    user_id: str = "anonymous"
+
+
+# ---------------------------------------------------------------------------
+# Nested entities
+# ---------------------------------------------------------------------------
 
 
 class MessageOut(BaseModel):
@@ -58,11 +107,17 @@ class ArtifactOut(BaseModel):
     message_id: Optional[str] = None
 
 
+# ---------------------------------------------------------------------------
+# Responses
+# ---------------------------------------------------------------------------
+
+
 class SessionSummary(BaseModel):
     session_id: str
     title: str
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    last_activity_at: Optional[datetime] = None
     dataset_id: Optional[str] = None
     dataset_name: Optional[str] = None
     dataset_topic: Optional[str] = None
@@ -70,6 +125,8 @@ class SessionSummary(BaseModel):
     favorite: bool = False
     archived: bool = False
     deleted: bool = False
+    pinned: bool = False
+    pin_order: Optional[int] = None
     message_count: int = 0
     tags: list[str] = Field(default_factory=list)
     last_query: Optional[str] = None
@@ -80,6 +137,9 @@ class SessionListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+    sort_by: str = "updated_at"
+    order: str = "desc"
+    filters: dict[str, Any] = Field(default_factory=dict)
 
 
 class SessionDetailResponse(BaseModel):
@@ -103,10 +163,11 @@ class SessionDetailResponse(BaseModel):
     favorite: bool = False
     archived: bool = False
     deleted: bool = False
+    pinned: bool = False
+    pin_order: Optional[int] = None
     tags: list[str] = Field(default_factory=list)
     message_count: int = 0
 
-    # Full conversation + outputs (Phase 1 restore)
     chat_history: list[MessageOut] = Field(default_factory=list)
     generated_charts: list[Any] = Field(default_factory=list)
     forecast_results: list[Any] = Field(default_factory=list)
@@ -114,7 +175,6 @@ class SessionDetailResponse(BaseModel):
     eda_outputs: list[Any] = Field(default_factory=list)
     artifacts: list[ArtifactOut] = Field(default_factory=list)
 
-    # Legacy flat fields (UI SessionDetail / messagesFromDetail)
     last_query: str = ""
     last_insight: str = ""
     last_column: str = ""
@@ -124,6 +184,41 @@ class SessionDetailResponse(BaseModel):
     last_operation: str = ""
     last_forecast_target: str = ""
     eda_summary: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionExportBundle(BaseModel):
+    format_version: str = "1.0"
+    exported_at: str
+    session: dict[str, Any]
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+    artifacts: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SessionActionResponse(BaseModel):
+    session_id: str
+    title: Optional[str] = None
+    status: Optional[str] = None
+    favorite: Optional[bool] = None
+    archived: Optional[bool] = None
+    deleted: Optional[bool] = None
+    pinned: Optional[bool] = None
+    pin_order: Optional[int] = None
+    message: Optional[str] = None
+
+
+class SessionDeleteResponse(BaseModel):
+    session_id: str
+    deleted: bool
+    hard: bool = False
+
+
+class SessionDuplicateResponse(SessionSummary):
+    source_session_id: str
+
+
+class SessionImportResponse(SessionSummary):
+    imported: bool = True
+    source_session_id: Optional[str] = None
 
 
 class ErrorResponse(BaseModel):

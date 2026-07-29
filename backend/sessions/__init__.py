@@ -1,7 +1,4 @@
-"""Core session persistence (Phase 1).
-
-Public surface used by FastAPI routes and the /ask pipeline.
-"""
+"""Session management (Phase 1 persistence + Phase 3 lifecycle APIs)."""
 
 from backend.sessions.models import AnalysisSession, SessionArtifact, SessionMessage
 from backend.sessions.service import SessionService, get_session_service
