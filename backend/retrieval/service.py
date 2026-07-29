@@ -26,7 +26,12 @@ def _build_default_agent() -> DatasetRetrievalAgent:
     # Lazy imports keep optional deps local and tests injectable
     from backend.dataset_library import dataset_exists, get_dataset_path
     from backend.db import get_session
-    from backend.registry import get_by_dataset_id, get_by_topic
+    from backend.registry import (
+        get_by_dataset_id,
+        get_by_topic,
+        list_datasets,
+        match_topic,
+    )
     from backend.semantic import search_similar
 
     session_provider = SessionProvider(session_loader=get_session)
@@ -35,6 +40,8 @@ def _build_default_agent() -> DatasetRetrievalAgent:
         get_by_dataset_id=get_by_dataset_id,
         dataset_exists=dataset_exists,
         get_dataset_path=get_dataset_path,
+        list_datasets=list_datasets,
+        match_topic=match_topic,
     )
     semantic_provider = SemanticProvider(
         search_similar=search_similar,
