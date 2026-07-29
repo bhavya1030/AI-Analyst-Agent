@@ -251,3 +251,29 @@ export async function duplicateSession(
     return null;
   }
 }
+
+/** Export full session bundle (JSON). */
+export async function exportSession(sessionId: string): Promise<Record<string, unknown> | null> {
+  try {
+    const response = await api.get<Record<string, unknown>>(
+      `/sessions/${encodeURIComponent(sessionId)}/export`
+    );
+    return response.data;
+  } catch {
+    return null;
+  }
+}
+
+/** Import a previously exported session bundle. */
+export async function importSession(payload: {
+  bundle: Record<string, unknown>;
+  session_id?: string;
+  title?: string;
+}): Promise<SessionSummary | null> {
+  try {
+    const response = await api.post<SessionSummary>("/sessions/import", payload);
+    return response.data;
+  } catch {
+    return null;
+  }
+}
