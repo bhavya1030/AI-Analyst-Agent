@@ -62,6 +62,8 @@ export interface AssistantResponse extends AssistantPayload {
   question?: string;
   /** Single chart object sometimes returned by the API instead of charts[] */
   chart?: any;
+  session_id?: string;
+  message_id?: string;
 }
 
 export interface UploadResponse {
@@ -69,11 +71,58 @@ export interface UploadResponse {
   file_path: string;
 }
 
+/** Backend chat message (Phase 1+ persistence) */
+export interface BackendChatMessage {
+  id: string;
+  seq: number;
+  role: string;
+  content: string;
+  created_at?: string;
+  payload?: Record<string, any> | null;
+  is_summarized?: boolean;
+  summary_group_id?: string | null;
+}
+
+/** Full restore payload from GET /sessions/{id} */
 export interface SessionDetail {
   session_id: string;
+  title?: string;
+  created_at?: string;
+  updated_at?: string;
+  last_activity_at?: string;
+  dataset_id?: string;
+  dataset_name?: string;
   dataset_path?: string;
   dataset_url?: string;
   dataset_topic?: string;
+  current_dataset?: Record<string, any> | null;
+  last_used_columns?: string[];
+  status?: string;
+  favorite?: boolean;
+  archived?: boolean;
+  deleted?: boolean;
+  pinned?: boolean;
+  pin_order?: number | null;
+  tags?: string[];
+  message_count?: number;
+  user_id?: string;
+  conversation_summary?: string;
+
+  chat_history?: BackendChatMessage[];
+  generated_charts?: any[];
+  forecast_results?: any[];
+  analysis_results?: any[];
+  eda_outputs?: any[];
+  artifacts?: Array<{
+    id: string;
+    kind: string;
+    title?: string;
+    content?: any;
+    meta?: Record<string, any> | null;
+    message_id?: string | null;
+  }>;
+
+  // Legacy flat fields
   last_query?: string;
   last_insight?: string;
   last_column?: string;
@@ -85,6 +134,68 @@ export interface SessionDetail {
   eda_summary?: Record<string, any>;
 }
 
+export interface SessionSummary {
+  session_id: string;
+  title: string;
+  created_at?: string;
+  updated_at?: string;
+  last_activity_at?: string;
+  dataset_id?: string | null;
+  dataset_name?: string | null;
+  dataset_topic?: string | null;
+  status?: string;
+  favorite?: boolean;
+  archived?: boolean;
+  deleted?: boolean;
+  pinned?: boolean;
+  pin_order?: number | null;
+  message_count?: number;
+  tags?: string[];
+  last_query?: string | null;
+  conversation_summary?: string | null;
+  user_id?: string;
+}
+
+export interface SessionListResponse {
+  items: SessionSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+  sort_by?: string;
+  order?: string;
+  filters?: Record<string, any>;
+}
+
+export interface SessionSearchHit {
+  session_id: string;
+  title: string;
+  score?: number;
+  rank?: number;
+  snippet?: string;
+  matched_fields?: string[];
+  highlights?: Record<string, string>;
+  dataset_topic?: string | null;
+  dataset_name?: string | null;
+  message_count?: number;
+  updated_at?: string;
+  last_activity_at?: string;
+  favorite?: boolean;
+  archived?: boolean;
+  pinned?: boolean;
+  tags?: string[];
+  status?: string;
+}
+
+export interface SessionSearchResponse {
+  query: string;
+  match_query?: string;
+  total: number;
+  limit: number;
+  offset: number;
+  engine?: string;
+  items: SessionSearchHit[];
+}
+
 export interface HistoryEntry {
   id: string;
   title: string;
@@ -92,11 +203,10 @@ export interface HistoryEntry {
   preview: string;
   timestamp: number;
   datasetName?: string;
-  /** Optional pointer to a user message id within that session */
   messageId?: string;
 }
 
-/** Full snapshot of one analyze session for reopen from history */
+/** In-memory snapshot for active session UI (not durable source of truth) */
 export interface SessionSnapshot {
   sessionId: string;
   datasetName: string;
@@ -108,6 +218,11 @@ export interface SessionSnapshot {
   hypotheses: string[];
   activeAssistantId: string | null;
   updatedAt: number;
+  title?: string;
+  favorite?: boolean;
+  archived?: boolean;
+  pinned?: boolean;
+  status?: string;
 }
 
 export interface SessionState {
@@ -122,6 +237,8 @@ export interface SessionState {
   hypotheses: string[];
   history: HistoryEntry[];
   activeAssistantId: string | null;
-  /** Cached conversations keyed by session id */
+  /** Ephemeral UI cache only — backend is source of truth */
   sessionsById: Record<string, SessionSnapshot>;
+  /** Server session list */
+  remoteSessionList: SessionSummary[];
 }

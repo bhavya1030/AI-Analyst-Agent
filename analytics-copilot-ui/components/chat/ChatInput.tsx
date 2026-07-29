@@ -19,6 +19,7 @@ export default function ChatInput() {
     setHypotheses,
     setForecast,
     setDatasetName,
+    ensureServerSession,
   } = useChatStore();
 
   const sendMessage = useCallback(
@@ -39,6 +40,11 @@ export default function ChatInput() {
       addMessage(userMessage);
 
       try {
+        // Ensure durable backend session exists before /ask (Phase 9)
+        const activeSessionId = await ensureServerSession(
+          text.trim().slice(0, 60) || "New analysis"
+        );
+
         // Prefer open-data discovery for named public topics so a sticky upload
         // (or old file_path) does not force the wrong dataset (e.g. GDP vs gold).
         const lower = text.trim().toLowerCase();
@@ -51,7 +57,7 @@ export default function ChatInput() {
 
         const payload = await askQuestion(
           text.trim(),
-          sessionId,
+          activeSessionId || sessionId,
           shouldPreferDiscovery ? undefined : filePath || undefined
         );
         const assistantMessage: ChatMessage = {
@@ -121,6 +127,7 @@ export default function ChatInput() {
     },
     [
       addMessage,
+      ensureServerSession,
       filePath,
       sessionId,
       setDatasetName,

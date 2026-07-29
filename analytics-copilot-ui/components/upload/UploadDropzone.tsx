@@ -5,7 +5,6 @@ import { useDropzone } from "react-dropzone";
 import { FileSpreadsheet, Loader2, Upload, X } from "lucide-react";
 import { uploadDataset } from "@/services/api";
 import { useChatStore } from "@/store/chatStore";
-import { saveSessionState } from "@/utils/localStorage";
 
 export default function UploadDropzone() {
   const [error, setError] = useState<string | null>(null);
@@ -16,6 +15,7 @@ export default function UploadDropzone() {
   const datasetName = useChatStore((state) => state.datasetName);
   const filePath = useChatStore((state) => state.filePath);
   const addMessage = useChatStore((state) => state.addMessage);
+  const ensureServerSession = useChatStore((state) => state.ensureServerSession);
 
   const onDrop = useCallback(
     async (acceptedFiles: File[]) => {
@@ -37,8 +37,8 @@ export default function UploadDropzone() {
         const result = await uploadDataset(file);
         setDatasetName(file.name);
         setFilePath(result.file_path);
-        saveSessionState("analytics-copilot-dataset", file.name);
-        saveSessionState("analytics-copilot-filepath", result.file_path);
+        // Bind dataset to durable backend session (no localStorage)
+        await ensureServerSession(file.name);
         addMessage({
           id: `system-upload-${Date.now()}`,
           role: "assistant",
@@ -51,7 +51,7 @@ export default function UploadDropzone() {
         setUploading(false);
       }
     },
-    [addMessage, setDatasetName, setFilePath]
+    [addMessage, ensureServerSession, setDatasetName, setFilePath]
   );
 
   const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
@@ -113,8 +113,6 @@ export default function UploadDropzone() {
               onClick={(e) => {
                 e.stopPropagation();
                 clearDataset();
-                saveSessionState("analytics-copilot-dataset", "");
-                saveSessionState("analytics-copilot-filepath", "");
               }}
               className="btn-secondary !py-1.5"
             >
