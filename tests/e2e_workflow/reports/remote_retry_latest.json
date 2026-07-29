@@ -1,0 +1,395 @@
+[
+  {
+    "id": "RR01",
+    "topic": "Electric Vehicle Sales",
+    "query": "Analyze electric vehicle sales dataset and show trends",
+    "status": 200,
+    "ms": 7447.8,
+    "dataset_topic": "electric vehicle sales",
+    "source": "",
+    "needs_user_data": true,
+    "charts": 0,
+    "forecast": false,
+    "answer": "Dataset download/acquisition failed: Download failed: Failed to download after 3 attempts: HTTP 403 for https://data.oecd.org/searchresults/?q=vehicle+sales+electric Suggested next steps: Upload a CSV",
+    "discovery": {},
+    "acquisition_options": [
+      {
+        "type": "upload",
+        "label": "Upload a CSV, Excel, JSON, or Parquet file",
+        "how": "Use the upload endpoint or UI dropzone, then ask your analysis question."
+      },
+      {
+        "type": "direct_url",
+        "label": "Paste a direct download URL",
+        "how": "Provide a link ending in .csv / .json / .xlsx / .parquet."
+      },
+      {
+        "type": "connect_source",
+        "label": "Connect an external source",
+        "how": "Use open portals (data.gov, World Bank, Kaggle, Hugging Face) and paste a raw file URL."
+      },
+      {
+        "type": "open_search",
+        "label": "Ask about a public topic",
+        "how": "Try: 'Analyze world GDP', 'Explore COVID cases', or 'Study population growth'."
+      }
+    ],
+    "full_pipeline": false,
+    "analyzed": false
+  },
+  {
+    "id": "RR02",
+    "topic": "Global CO2 Emissions",
+    "query": "Analyze CO2 emissions open data and visualize trends",
+    "status": 200,
+    "ms": 12546.9,
+    "dataset_topic": "co2 emissions open",
+    "source": "",
+    "needs_user_data": true,
+    "charts": 0,
+    "forecast": false,
+    "answer": "Dataset download/acquisition failed: Download failed: Failed to download after 3 attempts: HTTP 403 for https://data.oecd.org/searchresults/?q=emissions+co2 Suggested next steps: Upload a CSV/Excel fi",
+    "discovery": {},
+    "acquisition_options": [
+      {
+        "type": "upload",
+        "label": "Upload a CSV, Excel, JSON, or Parquet file",
+        "how": "Use the upload endpoint or UI dropzone, then ask your analysis question."
+      },
+      {
+        "type": "direct_url",
+        "label": "Paste a direct download URL",
+        "how": "Provide a link ending in .csv / .json / .xlsx / .parquet."
+      },
+      {
+        "type": "connect_source",
+        "label": "Connect an external source",
+        "how": "Use open portals (data.gov, World Bank, Kaggle, Hugging Face) and paste a raw file URL."
+      },
+      {
+        "type": "open_search",
+        "label": "Ask about a public topic",
+        "how": "Try: 'Analyze world GDP', 'Explore COVID cases', or 'Study population growth'."
+      }
+    ],
+    "full_pipeline": false,
+    "analyzed": false
+  },
+  {
+    "id": "RR03",
+    "topic": "Renewable Energy",
+    "query": "Analyze renewable energy production open dataset",
+    "status": 200,
+    "ms": 6995.0,
+    "dataset_topic": "renewable energy production open",
+    "source": "",
+    "needs_user_data": true,
+    "charts": 0,
+    "forecast": false,
+    "answer": "Dataset download/acquisition failed: Download failed: Failed to download after 3 attempts: HTTP 403 for https://data.oecd.org/searchresults/?q=energy+production+renewable Suggested next steps: Upload ",
+    "discovery": {},
+    "acquisition_options": [
+      {
+        "type": "upload",
+        "label": "Upload a CSV, Excel, JSON, or Parquet file",
+        "how": "Use the upload endpoint or UI dropzone, then ask your analysis question."
+      },
+      {
+        "type": "direct_url",
+        "label": "Paste a direct download URL",
+        "how": "Provide a link ending in .csv / .json / .xlsx / .parquet."
+      },
+      {
+        "type": "connect_source",
+        "label": "Connect an external source",
+        "how": "Use open portals (data.gov, World Bank, Kaggle, Hugging Face) and paste a raw file URL."
+      },
+      {
+        "type": "open_search",
+        "label": "Ask about a public topic",
+        "how": "Try: 'Analyze world GDP', 'Explore COVID cases', or 'Study population growth'."
+      }
+    ],
+    "full_pipeline": false,
+    "analyzed": false
+  },
+  {
+    "id": "RR04",
+    "topic": "World Happiness Index",
+    "query": "Analyze world happiness index dataset",
+    "status": 200,
+    "ms": 6557.9,
+    "dataset_topic": "world happiness index",
+    "source": "",
+    "needs_user_data": true,
+    "charts": 0,
+    "forecast": false,
+    "answer": "Dataset download/acquisition failed: Download failed: Failed to download after 3 attempts: HTTP 403 for https://data.oecd.org/searchresults/?q=index+world+happiness Suggested next steps: Upload a CSV/",
+    "discovery": {},
+    "acquisition_options": [
+      {
+        "type": "upload",
+        "label": "Upload a CSV, Excel, JSON, or Parquet file",
+        "how": "Use the upload endpoint or UI dropzone, then ask your analysis question."
+      },
+      {
+        "type": "direct_url",
+        "label": "Paste a direct download URL",
+        "how": "Provide a link ending in .csv / .json / .xlsx / .parquet."
+      },
+      {
+        "type": "connect_source",
+        "label": "Connect an external source",
+        "how": "Use open portals (data.gov, World Bank, Kaggle, Hugging Face) and paste a raw file URL."
+      },
+      {
+        "type": "open_search",
+        "label": "Ask about a public topic",
+        "how": "Try: 'Analyze world GDP', 'Explore COVID cases', or 'Study population growth'."
+      }
+    ],
+    "full_pipeline": false,
+    "analyzed": false
+  },
+  {
+    "id": "RR05",
+    "topic": "Air Quality Index",
+    "query": "Analyze air quality index open data",
+    "status": 200,
+    "ms": 6471.5,
+    "dataset_topic": "air quality index open",
+    "source": "",
+    "needs_user_data": true,
+    "charts": 0,
+    "forecast": false,
+    "answer": "Dataset download/acquisition failed: Download failed: Failed to download after 3 attempts: HTTP 403 for https://data.oecd.org/searchresults/?q=index+quality+air Suggested next steps: Upload a CSV/Exce",
+    "discovery": {},
+    "acquisition_options": [
+      {
+        "type": "upload",
+        "label": "Upload a CSV, Excel, JSON, or Parquet file",
+        "how": "Use the upload endpoint or UI dropzone, then ask your analysis question."
+      },
+      {
+        "type": "direct_url",
+        "label": "Paste a direct download URL",
+        "how": "Provide a link ending in .csv / .json / .xlsx / .parquet."
+      },
+      {
+        "type": "connect_source",
+        "label": "Connect an external source",
+        "how": "Use open portals (data.gov, World Bank, Kaggle, Hugging Face) and paste a raw file URL."
+      },
+      {
+        "type": "open_search",
+        "label": "Ask about a public topic",
+        "how": "Try: 'Analyze world GDP', 'Explore COVID cases', or 'Study population growth'."
+      }
+    ],
+    "full_pipeline": false,
+    "analyzed": false
+  },
+  {
+    "id": "RR06",
+    "topic": "Global Inflation",
+    "query": "Analyze global inflation rates open data",
+    "status": 200,
+    "ms": 5699.2,
+    "dataset_topic": "inflation global open",
+    "source": "",
+    "needs_user_data": true,
+    "charts": 0,
+    "forecast": false,
+    "answer": "Dataset download/acquisition failed: Download failed: Failed to download after 3 attempts: HTTP 404 for https://raw.githubusercontent.com/datasets/inflation/master/data/cpi.csv Suggested next steps: U",
+    "discovery": {},
+    "acquisition_options": [
+      {
+        "type": "upload",
+        "label": "Upload a CSV, Excel, JSON, or Parquet file",
+        "how": "Use the upload endpoint or UI dropzone, then ask your analysis question."
+      },
+      {
+        "type": "direct_url",
+        "label": "Paste a direct download URL",
+        "how": "Provide a link ending in .csv / .json / .xlsx / .parquet."
+      },
+      {
+        "type": "connect_source",
+        "label": "Connect an external source",
+        "how": "Use open portals (data.gov, World Bank, Kaggle, Hugging Face) and paste a raw file URL."
+      },
+      {
+        "type": "open_search",
+        "label": "Ask about a public topic",
+        "how": "Try: 'Analyze world GDP', 'Explore COVID cases', or 'Study population growth'."
+      }
+    ],
+    "full_pipeline": false,
+    "analyzed": false
+  },
+  {
+    "id": "RR07",
+    "topic": "Cryptocurrency",
+    "query": "Analyze bitcoin cryptocurrency price dataset and forecast",
+    "status": 200,
+    "ms": 6060.5,
+    "dataset_topic": "bitcoin cryptocurrency",
+    "source": "",
+    "needs_user_data": true,
+    "charts": 0,
+    "forecast": false,
+    "answer": "Dataset download/acquisition failed: Download failed: Failed to download after 3 attempts: HTTP 403 for https://data.oecd.org/searchresults/?q=cryptocurrency+bitcoin Suggested next steps: Upload a CSV",
+    "discovery": {},
+    "acquisition_options": [
+      {
+        "type": "upload",
+        "label": "Upload a CSV, Excel, JSON, or Parquet file",
+        "how": "Use the upload endpoint or UI dropzone, then ask your analysis question."
+      },
+      {
+        "type": "direct_url",
+        "label": "Paste a direct download URL",
+        "how": "Provide a link ending in .csv / .json / .xlsx / .parquet."
+      },
+      {
+        "type": "connect_source",
+        "label": "Connect an external source",
+        "how": "Use open portals (data.gov, World Bank, Kaggle, Hugging Face) and paste a raw file URL."
+      },
+      {
+        "type": "open_search",
+        "label": "Ask about a public topic",
+        "how": "Try: 'Analyze world GDP', 'Explore COVID cases', or 'Study population growth'."
+      }
+    ],
+    "full_pipeline": false,
+    "analyzed": false
+  },
+  {
+    "id": "RR08",
+    "topic": "Olympic Medals",
+    "query": "Analyze olympic medal counts by country open data",
+    "status": 200,
+    "ms": 973.0,
+    "dataset_topic": "olympic medal counts by country open",
+    "source": "registry_hit",
+    "needs_user_data": false,
+    "charts": 1,
+    "forecast": false,
+    "answer": "Analyzed olympic medal counts by country open (13979 rows, 4 columns). No missing values detected in the prepared frame. Average Year is 1994.67. Average Value is 1207379525661.76. Patterns: Outliers ",
+    "discovery": {},
+    "acquisition_options": [],
+    "full_pipeline": true,
+    "analyzed": true
+  },
+  {
+    "id": "RR09",
+    "topic": "Internet Usage",
+    "query": "Analyze global internet usage statistics open data",
+    "status": 200,
+    "ms": 6021.3,
+    "dataset_topic": "global internet usage statistics open",
+    "source": "",
+    "needs_user_data": true,
+    "charts": 0,
+    "forecast": false,
+    "answer": "Dataset download/acquisition failed: Download failed: Failed to download after 3 attempts: HTTP 403 for https://data.oecd.org/searchresults/?q=internet+global+usage+statistics Suggested next steps: Up",
+    "discovery": {},
+    "acquisition_options": [
+      {
+        "type": "upload",
+        "label": "Upload a CSV, Excel, JSON, or Parquet file",
+        "how": "Use the upload endpoint or UI dropzone, then ask your analysis question."
+      },
+      {
+        "type": "direct_url",
+        "label": "Paste a direct download URL",
+        "how": "Provide a link ending in .csv / .json / .xlsx / .parquet."
+      },
+      {
+        "type": "connect_source",
+        "label": "Connect an external source",
+        "how": "Use open portals (data.gov, World Bank, Kaggle, Hugging Face) and paste a raw file URL."
+      },
+      {
+        "type": "open_search",
+        "label": "Ask about a public topic",
+        "how": "Try: 'Analyze world GDP', 'Explore COVID cases', or 'Study population growth'."
+      }
+    ],
+    "full_pipeline": false,
+    "analyzed": false
+  },
+  {
+    "id": "RR10",
+    "topic": "International Tourism",
+    "query": "Analyze international tourism arrivals open data",
+    "status": 200,
+    "ms": 5874.7,
+    "dataset_topic": "international tourism arrivals open",
+    "source": "",
+    "needs_user_data": true,
+    "charts": 0,
+    "forecast": false,
+    "answer": "Dataset download/acquisition failed: Download failed: Failed to download after 3 attempts: HTTP 403 for https://data.oecd.org/searchresults/?q=tourism+international+arrivals Suggested next steps: Uplo",
+    "discovery": {},
+    "acquisition_options": [
+      {
+        "type": "upload",
+        "label": "Upload a CSV, Excel, JSON, or Parquet file",
+        "how": "Use the upload endpoint or UI dropzone, then ask your analysis question."
+      },
+      {
+        "type": "direct_url",
+        "label": "Paste a direct download URL",
+        "how": "Provide a link ending in .csv / .json / .xlsx / .parquet."
+      },
+      {
+        "type": "connect_source",
+        "label": "Connect an external source",
+        "how": "Use open portals (data.gov, World Bank, Kaggle, Hugging Face) and paste a raw file URL."
+      },
+      {
+        "type": "open_search",
+        "label": "Ask about a public topic",
+        "how": "Try: 'Analyze world GDP', 'Explore COVID cases', or 'Study population growth'."
+      }
+    ],
+    "full_pipeline": false,
+    "analyzed": false
+  },
+  {
+    "id": "RR11",
+    "topic": "GDP catalog",
+    "query": "Analyze world GDP open data trends",
+    "status": 200,
+    "ms": 919.4,
+    "dataset_topic": "gdp world open",
+    "source": "registry_hit",
+    "needs_user_data": false,
+    "charts": 1,
+    "forecast": false,
+    "answer": "Analyzed gdp world open (13979 rows, 4 columns). No missing values detected in the prepared frame. Average Year is 1994.67. Average Value is 1207379525661.76. Patterns: Outliers detected in 'Value' wi",
+    "discovery": {},
+    "acquisition_options": [],
+    "full_pipeline": true,
+    "analyzed": true
+  },
+  {
+    "id": "RR12",
+    "topic": "Population catalog",
+    "query": "Analyze world population open data growth",
+    "status": 200,
+    "ms": 1119.9,
+    "dataset_topic": "population world open growth",
+    "source": "registry_hit",
+    "needs_user_data": false,
+    "charts": 1,
+    "forecast": false,
+    "answer": "Analyzed population world open growth (17195 rows, 4 columns). No missing values detected in the prepared frame. Average Year is 1992.03. Average Value is 218237897.36. Patterns: Outliers detected in ",
+    "discovery": {},
+    "acquisition_options": [],
+    "full_pipeline": true,
+    "analyzed": true
+  }
+]
