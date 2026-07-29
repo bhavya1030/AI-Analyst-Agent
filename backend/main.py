@@ -33,6 +33,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+try:
+    from backend.production.profiling_middleware import PipelineProfilingMiddleware
+
+    app.add_middleware(PipelineProfilingMiddleware)
+except Exception as _mw_exc:
+    # Middleware is optional; ask-path timing still works without it
+    pass
+
 app.include_router(sessions_router)
 graph = build_graph()
 logger = get_logger(__name__)
@@ -371,11 +379,25 @@ def _build_state(session, question=None, file_path=None):
     }
 
 
-def _stable_response(result, question=None):
+def _stable_response(result, question=None, timings=None):
     dataset_profile = result.get("dataset_profile") or {}
     charts = result.get("charts") or []
     if not charts and result.get("chart") is not None:
         charts = [result.get("chart")]
+
+    # Merge stage timings from graph state + request timer
+    from backend.production.pipeline_timing import (
+        extract_timings_from_state,
+        get_timer,
+        merge_timings,
+    )
+
+    state_timings = extract_timings_from_state(result if isinstance(result, dict) else {})
+    timer = get_timer()
+    timer_timings = timer.as_dict() if timer is not None else {}
+    merged = merge_timings(state_timings, timer_timings, timings if isinstance(timings, dict) else None)
+    if "total" not in merged and timer is not None:
+        merged["total"] = timer.as_dict().get("total", 0)
 
     payload = {
         "question": question or "",
@@ -416,6 +438,7 @@ def _stable_response(result, question=None):
         "dataset_learned": bool(result.get("dataset_learned")),
         "learned_aliases": result.get("learned_aliases") or [],
         "topic_via_llm": bool(result.get("topic_via_llm")),
+        "timings": merged,
     }
     return sanitize_for_json(payload)
 
@@ -642,6 +665,17 @@ def cache_invalidate(
     )
 
 
+@app.get("/v1/metrics/timings")
+@app.get("/metrics/timings")
+def metrics_timings(user: AuthUser = Depends(get_current_user)):
+    """Aggregate stage timing stats across process lifetime."""
+    from backend.production.pipeline_timing import aggregate_timing_stats
+
+    return sanitize_for_json(
+        {"stages": aggregate_timing_stats(), "user_id": user.user_id}
+    )
+
+
 @app.get("/v1/ask")
 @app.get("/ask")
 def ask(
@@ -658,78 +692,94 @@ def ask(
         resolve_dataset_fingerprint,
     )
     from backend.cache.fingerprint import compute_dataset_fingerprint
+    from backend.production.pipeline_timing import (
+        pipeline_timer,
+        record_stage_ms,
+        time_stage,
+    )
 
     ask_t0 = _time.perf_counter()
-    session_svc = get_session_service()
-    memory_svc = get_memory_hierarchy()
-    user_id = user.user_id
-    normalized_file_path = _normalize_dataset_reference(file_path)
-    ask_cache = get_ask_cache()
-    intent = primary_intent(question)
+    with pipeline_timer(session_id=session_id, question=(question or "")[:120]) as timer:
+        session_svc = get_session_service()
+        memory_svc = get_memory_hierarchy()
+        user_id = user.user_id
+        normalized_file_path = _normalize_dataset_reference(file_path)
+        ask_cache = get_ask_cache()
 
-    # Phase 1: ensure durable session + append user message before the graph run
-    try:
-        session_svc.ensure_session(session_id, user_id=user_id)
-        session_svc.append_user_message(session_id, question, user_id=user_id)
-    except SessionAccessDenied:
-        return JSONResponse(
-            status_code=403,
-            content={
-                "error": f"Access denied to session '{session_id}'",
-                "code": "SESSION_ACCESS_DENIED",
-                "user_id": user_id,
-            },
-        )
-    except Exception as exc:
-        logger.warning(
-            "Session user-message persist failed; continuing ask",
-            extra={"session_id": session_id, "error": str(exc)},
-        )
+        t_intent = _time.perf_counter()
+        intent = primary_intent(question)
+        record_stage_ms("intent", (_time.perf_counter() - t_intent) * 1000)
 
-    session = get_session(session_id)
-
-    # --- Ask-level cache lookup (skip Planner/EDA/Viz/Forecast on hit) ---
-    cache_fp = resolve_dataset_fingerprint(
-        file_path=normalized_file_path
-        if normalized_file_path and not _is_remote_reference(normalized_file_path)
-        else None,
-        dataset_path=getattr(session, "dataset_path", None) if session else None,
-        dataset_url=getattr(session, "dataset_url", None) if session else None,
-    )
-    # High-confidence registry local path for topic (cheap, no graph)
-    if not cache_fp and not normalized_file_path:
+        # Phase 1: ensure durable session + append user message before the graph run
         try:
-            from backend.registry import match_topic
-
-            topic_guess = " ".join((question or "").split()[:10])
-            hits = match_topic(topic_guess or question, question=question, limit=1)
-            if hits and hits[0].metadata and hits[0].metadata.local_path:
-                cache_fp = resolve_dataset_fingerprint(
-                    dataset_path=hits[0].metadata.local_path
-                )
-        except Exception as cache_topic_exc:
-            logger.debug(
-                "Ask cache topic fingerprint probe skipped",
-                extra={"error": str(cache_topic_exc)},
+            with time_stage("session"):
+                session_svc.ensure_session(session_id, user_id=user_id)
+                session_svc.append_user_message(session_id, question, user_id=user_id)
+        except SessionAccessDenied:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": f"Access denied to session '{session_id}'",
+                    "code": "SESSION_ACCESS_DENIED",
+                    "user_id": user_id,
+                    "timings": timer.as_dict(),
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                "Session user-message persist failed; continuing ask",
+                extra={"session_id": session_id, "error": str(exc)},
             )
 
-    if cache_fp:
-        cached_body, cache_meta = ask_cache.get(
-            cache_fp,
-            question,
-            intent=intent,
-            file_path=normalized_file_path,
-        )
+        with time_stage("session"):
+            session = get_session(session_id)
+
+        # --- Ask-level cache lookup (skip Planner/EDA/Viz/Forecast on hit) ---
+        with time_stage("cache"):
+            cache_fp = resolve_dataset_fingerprint(
+                file_path=normalized_file_path
+                if normalized_file_path and not _is_remote_reference(normalized_file_path)
+                else None,
+                dataset_path=getattr(session, "dataset_path", None) if session else None,
+                dataset_url=getattr(session, "dataset_url", None) if session else None,
+            )
+            # High-confidence registry local path for topic (cheap, no graph)
+            if not cache_fp and not normalized_file_path:
+                try:
+                    from backend.registry import match_topic
+
+                    topic_guess = " ".join((question or "").split()[:10])
+                    hits = match_topic(topic_guess or question, question=question, limit=1)
+                    if hits and hits[0].metadata and hits[0].metadata.local_path:
+                        cache_fp = resolve_dataset_fingerprint(
+                            dataset_path=hits[0].metadata.local_path
+                        )
+                except Exception as cache_topic_exc:
+                    logger.debug(
+                        "Ask cache topic fingerprint probe skipped",
+                        extra={"error": str(cache_topic_exc)},
+                    )
+
+            cached_body, cache_meta = (None, {})
+            if cache_fp:
+                cached_body, cache_meta = ask_cache.get(
+                    cache_fp,
+                    question,
+                    intent=intent,
+                    file_path=normalized_file_path,
+                )
+
         if cached_body:
             # Persist session turn from cache (no recompute)
             try:
-                turn = session_svc.record_assistant_turn(
-                    session_id,
-                    question=question,
-                    result=cached_body,
-                    file_path=normalized_file_path,
-                    user_id=user_id,
-                )
+                with time_stage("session"):
+                    turn = session_svc.record_assistant_turn(
+                        session_id,
+                        question=question,
+                        result=cached_body,
+                        file_path=normalized_file_path,
+                        user_id=user_id,
+                    )
             except Exception:
                 turn = None
             elapsed_ms = (_time.perf_counter() - ask_t0) * 1000
@@ -744,211 +794,255 @@ def ask(
                 **cache_meta,
                 "stats": ask_cache.stats(),
             }
+            timings = timer.as_dict()
+            timings["total"] = int(round(elapsed_ms))
+            # Zero out pipeline stages not executed on cache hit
+            for k in (
+                "planner",
+                "retrieval",
+                "download",
+                "validation",
+                "profiling",
+                "eda",
+                "visualization",
+                "forecast",
+                "insights",
+            ):
+                timings.setdefault(k, 0)
+            response["timings"] = timings
             if turn:
                 response["message_id"] = turn.get("message_id")
                 response["artifact_ids"] = turn.get("artifact_ids") or []
+            logger.info(
+                "Ask completed from cache",
+                extra={"session_id": session_id, "timings": timings},
+            )
             return sanitize_for_json(response)
 
-    state = _build_state(
-        session=session,
-        question=question,
-        file_path=normalized_file_path,
-    )
-    state["session_id"] = session_id
-    state["user_id"] = user_id
-
-    if normalized_file_path:
-        state["file_path"] = normalized_file_path
-
-    # Phase 5: load → inject memory hierarchy into LangGraph state
-    memory_bundle = None
-    try:
-        memory_bundle = memory_svc.load(
-            session_id,
-            user_id=user_id,
+        state = _build_state(
+            session=session,
             question=question,
-            dataset_topic=getattr(session, "dataset_topic", None) if session else None,
-            dataset_url=getattr(session, "dataset_url", None) if session else None,
-            dataset_path=(
-                normalized_file_path
-                if normalized_file_path and not _is_remote_reference(normalized_file_path)
-                else (getattr(session, "dataset_path", None) if session else None)
-            ),
-            dataset_id=None,
+            file_path=normalized_file_path,
         )
-        state = memory_svc.inject_into_state(state, memory_bundle)
-    except Exception as mem_exc:
-        logger.warning(
-            "Memory hierarchy load failed on ask",
-            extra={"session_id": session_id, "error": str(mem_exc)},
-        )
+        state["session_id"] = session_id
+        state["user_id"] = user_id
 
-    # Phase 6: restore prior checkpoint (crash recovery / continuity) into state
-    try:
-        from backend.graph.state_codec import merge_checkpoint_into_state
+        if normalized_file_path:
+            state["file_path"] = normalized_file_path
 
-        ckpt_svc = get_checkpoint_service()
-        if ckpt_svc.has_checkpoint(session_id) and not state.get("topic_mismatch"):
-            resumed = ckpt_svc.resume_session(
-                session_id, question=question, base_state=state
-            )
-            if resumed.get("resumable") and resumed.get("graph_state"):
-                # Keep this turn's question / upload path
-                restored = resumed["graph_state"]
-                restored["question"] = question
-                if normalized_file_path:
-                    restored["file_path"] = normalized_file_path
-                state = merge_checkpoint_into_state(
-                    state, restored, prefer_checkpoint=True
-                )
-                state["question"] = question
-                if normalized_file_path:
-                    state["file_path"] = normalized_file_path
-                state["checkpoint_restored"] = True
-                state["restored_checkpoint_id"] = (
-                    (resumed.get("checkpoint") or {}).get("checkpoint_id")
-                )
-    except Exception as ckpt_exc:
-        logger.warning(
-            "Checkpoint restore skipped on ask",
-            extra={"session_id": session_id, "error": str(ckpt_exc)},
-        )
-
-    try:
-        result = _invoke_graph(state, session_id)
-
-        # Phase 1: store assistant message + charts/forecast/EDA artifacts
+        # Phase 5: load → inject memory hierarchy into LangGraph state
+        memory_bundle = None
         try:
-            turn = session_svc.record_assistant_turn(
-                session_id,
-                question=question,
-                result=result,
-                file_path=normalized_file_path,
-                user_id=user_id,
-            )
-        except Exception as persist_exc:
-            logger.warning(
-                "Session assistant-turn persist failed; falling back to legacy save",
-                extra={"session_id": session_id, "error": str(persist_exc)},
-            )
-            turn = None
-            save_kwargs = {
-                "last_column": result.get("last_column_used"),
-                "last_columns": result.get("last_columns_used") or [],
-                "last_chart_type": result.get("last_chart_type"),
-                "last_intent": result.get("last_intent"),
-                "last_operation": result.get("last_operation"),
-                "last_forecast_target": result.get("last_forecast_target"),
-                "last_query": question,
-                "last_insight": result.get("answer"),
-                "eda_summary": result.get("dataset_profile") or {},
-                "dataset_topic": result.get("dataset_topic"),
-            }
-
-            if normalized_file_path and result.get("data") is not None:
-                if _is_remote_reference(normalized_file_path):
-                    save_kwargs["dataset_path"] = None
-                    save_kwargs["dataset_url"] = normalized_file_path
-                elif not result.get("dataset_url"):
-                    save_kwargs["dataset_path"] = normalized_file_path
-                    save_kwargs["dataset_url"] = None
-            elif result.get("dataset_url") and result.get("data") is not None:
-                save_kwargs["dataset_path"] = None
-                save_kwargs["dataset_url"] = result["dataset_url"]
-
-            save_session(session_id=session_id, **save_kwargs)
-
-        # Phase 5: persist L2 session + L3 dataset memory after the turn
-        try:
-            memory_svc.persist(
-                session_id,
-                result,
-                user_id=user_id,
-                question=question,
-                prior=memory_bundle,
-            )
+            with time_stage("session"):
+                memory_bundle = memory_svc.load(
+                    session_id,
+                    user_id=user_id,
+                    question=question,
+                    dataset_topic=getattr(session, "dataset_topic", None) if session else None,
+                    dataset_url=getattr(session, "dataset_url", None) if session else None,
+                    dataset_path=(
+                        normalized_file_path
+                        if normalized_file_path
+                        and not _is_remote_reference(normalized_file_path)
+                        else (getattr(session, "dataset_path", None) if session else None)
+                    ),
+                    dataset_id=None,
+                )
+                state = memory_svc.inject_into_state(state, memory_bundle)
         except Exception as mem_exc:
             logger.warning(
-                "Memory hierarchy persist failed on ask",
+                "Memory hierarchy load failed on ask",
                 extra={"session_id": session_id, "error": str(mem_exc)},
             )
 
-        # Phase 6: durable turn checkpoint after successful graph run
-        ckpt = _save_turn_checkpoint(session_id, result)
+        # Phase 6: restore prior checkpoint (crash recovery / continuity) into state
+        try:
+            from backend.graph.state_codec import merge_checkpoint_into_state
 
-        response = _stable_response(result, question=question)
-        if isinstance(response, dict):
-            response["session_id"] = session_id
-            response["user_id"] = user_id
-            if turn:
-                response["message_id"] = turn.get("message_id")
-                response["artifact_ids"] = turn.get("artifact_ids") or []
-            response["memory_hierarchy_loaded"] = bool(
-                state.get("memory_hierarchy_loaded")
+            ckpt_svc = get_checkpoint_service()
+            if ckpt_svc.has_checkpoint(session_id) and not state.get("topic_mismatch"):
+                with time_stage("session"):
+                    resumed = ckpt_svc.resume_session(
+                        session_id, question=question, base_state=state
+                    )
+                    if resumed.get("resumable") and resumed.get("graph_state"):
+                        # Keep this turn's question / upload path
+                        restored = resumed["graph_state"]
+                        restored["question"] = question
+                        if normalized_file_path:
+                            restored["file_path"] = normalized_file_path
+                        state = merge_checkpoint_into_state(
+                            state, restored, prefer_checkpoint=True
+                        )
+                        state["question"] = question
+                        if normalized_file_path:
+                            state["file_path"] = normalized_file_path
+                        state["checkpoint_restored"] = True
+                        state["restored_checkpoint_id"] = (
+                            (resumed.get("checkpoint") or {}).get("checkpoint_id")
+                        )
+        except Exception as ckpt_exc:
+            logger.warning(
+                "Checkpoint restore skipped on ask",
+                extra={"session_id": session_id, "error": str(ckpt_exc)},
             )
-            if ckpt:
-                response["checkpoint_id"] = ckpt.get("checkpoint_id")
-                response["checkpoint_saved"] = True
-            if state.get("checkpoint_restored"):
-                response["checkpoint_restored"] = True
-                response["restored_checkpoint_id"] = state.get("restored_checkpoint_id")
 
-            # --- Ask-level cache store (final answer + charts/EDA/forecast) ---
+        try:
+            result = _invoke_graph(state, session_id)
+
+            # Phase 1: store assistant message + charts/forecast/EDA artifacts
             try:
-                store_fp = (
-                    result.get("dataset_fingerprint")
-                    or cache_fp
-                    or resolve_dataset_fingerprint(
-                        file_path=normalized_file_path
-                        if normalized_file_path
-                        and not _is_remote_reference(normalized_file_path)
-                        else None,
-                        dataset_path=result.get("local_path") or result.get("file_path"),
-                        dataset_url=result.get("dataset_url"),
-                        data=result.get("data"),
-                    )
-                )
-                if not store_fp and result.get("data") is not None:
-                    store_fp = compute_dataset_fingerprint(
-                        result.get("data"),
-                        result.get("dataset_url") or normalized_file_path,
-                    )
-                cold_ms = (_time.perf_counter() - ask_t0) * 1000
-                if store_fp and not response.get("needs_user_data"):
-                    ask_cache.put(
-                        store_fp,
-                        question,
-                        response,
-                        intent=intent,
+                with time_stage("session"):
+                    turn = session_svc.record_assistant_turn(
+                        session_id,
+                        question=question,
+                        result=result,
                         file_path=normalized_file_path,
-                        cold_ms=cold_ms,
+                        user_id=user_id,
                     )
-                    response["dataset_fingerprint"] = store_fp
-                response["cache_hit"] = False
-                response["cache_skipped_pipeline"] = False
-                response["response_ms"] = round(cold_ms, 2)
-                response["cache"] = {
-                    "cache_hit": False,
-                    "fingerprint": store_fp,
-                    "intent": intent,
-                    "stats": ask_cache.stats(),
-                }
-            except Exception as cache_store_exc:
+            except Exception as persist_exc:
                 logger.warning(
-                    "Ask cache store failed",
-                    extra={"error": str(cache_store_exc)},
+                    "Session assistant-turn persist failed; falling back to legacy save",
+                    extra={"session_id": session_id, "error": str(persist_exc)},
+                )
+                turn = None
+                save_kwargs = {
+                    "last_column": result.get("last_column_used"),
+                    "last_columns": result.get("last_columns_used") or [],
+                    "last_chart_type": result.get("last_chart_type"),
+                    "last_intent": result.get("last_intent"),
+                    "last_operation": result.get("last_operation"),
+                    "last_forecast_target": result.get("last_forecast_target"),
+                    "last_query": question,
+                    "last_insight": result.get("answer"),
+                    "eda_summary": result.get("dataset_profile") or {},
+                    "dataset_topic": result.get("dataset_topic"),
+                }
+
+                if normalized_file_path and result.get("data") is not None:
+                    if _is_remote_reference(normalized_file_path):
+                        save_kwargs["dataset_path"] = None
+                        save_kwargs["dataset_url"] = normalized_file_path
+                    elif not result.get("dataset_url"):
+                        save_kwargs["dataset_path"] = normalized_file_path
+                        save_kwargs["dataset_url"] = None
+                elif result.get("dataset_url") and result.get("data") is not None:
+                    save_kwargs["dataset_path"] = None
+                    save_kwargs["dataset_url"] = result["dataset_url"]
+
+                save_session(session_id=session_id, **save_kwargs)
+
+            # Phase 5: persist L2 session + L3 dataset memory after the turn
+            try:
+                with time_stage("session"):
+                    memory_svc.persist(
+                        session_id,
+                        result,
+                        user_id=user_id,
+                        question=question,
+                        prior=memory_bundle,
+                    )
+            except Exception as mem_exc:
+                logger.warning(
+                    "Memory hierarchy persist failed on ask",
+                    extra={"session_id": session_id, "error": str(mem_exc)},
                 )
 
-        return response
-    except Exception as exc:
-        logger.error(
-            "Ask pipeline failed",
-            extra={"action": "ask", "question": question, "error": str(exc)},
-        )
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": "Pipeline execution failed",
-                "details": str(exc),
-            },
-        )
+            # Phase 6: durable turn checkpoint after successful graph run
+            with time_stage("session"):
+                ckpt = _save_turn_checkpoint(session_id, result)
+
+            response = _stable_response(result, question=question)
+            if isinstance(response, dict):
+                response["session_id"] = session_id
+                response["user_id"] = user_id
+                if turn:
+                    response["message_id"] = turn.get("message_id")
+                    response["artifact_ids"] = turn.get("artifact_ids") or []
+                response["memory_hierarchy_loaded"] = bool(
+                    state.get("memory_hierarchy_loaded")
+                )
+                if ckpt:
+                    response["checkpoint_id"] = ckpt.get("checkpoint_id")
+                    response["checkpoint_saved"] = True
+                if state.get("checkpoint_restored"):
+                    response["checkpoint_restored"] = True
+                    response["restored_checkpoint_id"] = state.get(
+                        "restored_checkpoint_id"
+                    )
+
+                # --- Ask-level cache store (final answer + charts/EDA/forecast) ---
+                try:
+                    with time_stage("cache"):
+                        store_fp = (
+                            result.get("dataset_fingerprint")
+                            or cache_fp
+                            or resolve_dataset_fingerprint(
+                                file_path=normalized_file_path
+                                if normalized_file_path
+                                and not _is_remote_reference(normalized_file_path)
+                                else None,
+                                dataset_path=result.get("local_path")
+                                or result.get("file_path"),
+                                dataset_url=result.get("dataset_url"),
+                                data=result.get("data"),
+                            )
+                        )
+                        if not store_fp and result.get("data") is not None:
+                            store_fp = compute_dataset_fingerprint(
+                                result.get("data"),
+                                result.get("dataset_url") or normalized_file_path,
+                            )
+                        cold_ms = (_time.perf_counter() - ask_t0) * 1000
+                        if store_fp and not response.get("needs_user_data"):
+                            ask_cache.put(
+                                store_fp,
+                                question,
+                                response,
+                                intent=intent,
+                                file_path=normalized_file_path,
+                                cold_ms=cold_ms,
+                            )
+                            response["dataset_fingerprint"] = store_fp
+                        response["cache_hit"] = False
+                        response["cache_skipped_pipeline"] = False
+                        response["response_ms"] = round(cold_ms, 2)
+                        response["cache"] = {
+                            "cache_hit": False,
+                            "fingerprint": store_fp,
+                            "intent": intent,
+                            "stats": ask_cache.stats(),
+                        }
+                except Exception as cache_store_exc:
+                    logger.warning(
+                        "Ask cache store failed",
+                        extra={"error": str(cache_store_exc)},
+                    )
+
+                # Ensure timings always present with wall total
+                timings = response.get("timings") or timer.as_dict()
+                timings["total"] = int(round((_time.perf_counter() - ask_t0) * 1000))
+                response["timings"] = timings
+                logger.info(
+                    "Ask completed",
+                    extra={
+                        "session_id": session_id,
+                        "timings": timings,
+                        "cache_hit": False,
+                    },
+                )
+
+            return response
+        except Exception as exc:
+            logger.error(
+                "Ask pipeline failed",
+                extra={"action": "ask", "question": question, "error": str(exc)},
+            )
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": "Pipeline execution failed",
+                    "details": str(exc),
+                    "timings": timer.as_dict(),
+                },
+            )
