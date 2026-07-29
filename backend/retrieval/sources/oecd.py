@@ -1,4 +1,4 @@
-"""OECD open data — SDMX/JSON API probes for known topics."""
+"""OECD open data — only structured SDMX JSON endpoints (never HTML search pages)."""
 
 from __future__ import annotations
 
@@ -6,23 +6,24 @@ from backend.retrieval.sources.base import DataSource, SourceCandidate
 from backend.retrieval.sources.common import score_text, topic_tokens
 
 # Well-known OECD SDMX endpoints (JSON) for common macro topics.
+# NOTE: Do NOT return data.oecd.org/searchresults HTML pages — they are not datasets.
 OECD_ENDPOINTS = {
     "gdp": {
         "title": "OECD GDP (SDMX JSON)",
-        "url": "https://stats.oecd.org/SDMX-JSON/data/QNA/all/all",
-        "description": "OECD Quarterly National Accounts style endpoint (JSON).",
+        "url": "https://stats.oecd.org/SDMX-JSON/data/QNA/AUS+USA+GBR+DEU+FRA+JPN+CAN.B1_GE.VOBARSA.Q/all?startTime=2015",
+        "description": "OECD Quarterly National Accounts GDP-style SDMX JSON endpoint.",
         "tags": ["oecd", "gdp", "macro"],
     },
     "unemployment": {
-        "title": "OECD Unemployment",
-        "url": "https://stats.oecd.org/SDMX-JSON/data/STLABOUR/all/all",
-        "description": "OECD labour statistics endpoint (JSON).",
+        "title": "OECD Unemployment (SDMX JSON)",
+        "url": "https://stats.oecd.org/SDMX-JSON/data/STLABOUR/AUS+USA.LRHUTTTT.STSA.M/all?startTime=2018",
+        "description": "OECD labour statistics SDMX JSON endpoint.",
         "tags": ["oecd", "unemployment", "labour"],
     },
     "inflation": {
-        "title": "OECD Inflation / CPI",
-        "url": "https://stats.oecd.org/SDMX-JSON/data/PRICES_CPI/all/all",
-        "description": "OECD consumer prices endpoint (JSON).",
+        "title": "OECD Inflation / CPI (SDMX JSON)",
+        "url": "https://stats.oecd.org/SDMX-JSON/data/PRICES_CPI/AUS+USA.CPALTT01.IXOB.M/all?startTime=2018",
+        "description": "OECD consumer prices SDMX JSON endpoint.",
         "tags": ["oecd", "inflation", "cpi"],
     },
 }
@@ -53,21 +54,6 @@ class OECDSource(DataSource):
                     )
                 )
 
-        # Generic OECD topic page (not always loadable tabular)
-        if not hits and tokens:
-            hits.append(
-                SourceCandidate(
-                    title=f"OECD search: {topic}",
-                    topic=topic,
-                    download_url=f"https://data.oecd.org/searchresults/?q={'+'.join(list(tokens)[:5])}",
-                    source="OECD",
-                    source_type="Web",
-                    description="OECD data search landing page (may require further resource selection).",
-                    file_format="unknown",
-                    tags=["oecd", "search"],
-                    rank_hint=3 + score_text(topic, topic),
-                )
-            )
-
+        # Intentionally no HTML searchresults fallback.
         hits.sort(key=lambda c: c.rank_hint, reverse=True)
         return hits[:limit]

@@ -132,6 +132,26 @@ class DatasetAcquisitionService:
                 provider=payload.get("provider"),
             )
 
+        # Lazy import avoids circular import with retrieval package init
+        from backend.retrieval.data_providers.validation import (
+            is_blocked_url,
+            validate_download_payload,
+        )
+
+        blocked, why = is_blocked_url(download_url)
+        if blocked:
+            logger.warning(
+                "Acquisition rejected blocked URL",
+                extra={"url": download_url, "reason": why, "provider": payload.get("provider")},
+            )
+            return AcquisitionResult.failure(
+                f"Refusing non-dataset URL ({why}): {download_url}",
+                acquisition_time=started,
+                dataset_id=dataset_id,
+                source_url=download_url,
+                provider=payload.get("provider"),
+            )
+
         # 2) Download
         try:
             downloaded = self._download(download_url)
@@ -147,8 +167,36 @@ class DatasetAcquisitionService:
         content = downloaded.content
         final_url = downloaded.final_url or download_url
 
+        # 2b) Strict payload validation (reject HTML/PDF/search pages)
+        payload_check = validate_download_payload(
+            content,
+            url=final_url,
+            content_type=getattr(downloaded, "content_type", None),
+        )
+        if not payload_check.ok:
+            logger.warning(
+                "Acquisition payload validation failed",
+                extra={
+                    "url": final_url,
+                    "reason": payload_check.reason,
+                    "content_type": payload_check.content_type,
+                    "provider": payload.get("provider"),
+                },
+            )
+            return AcquisitionResult.failure(
+                f"Downloaded content failed validation: {payload_check.reason}",
+                acquisition_time=started,
+                dataset_id=dataset_id,
+                source_url=final_url,
+                provider=payload.get("provider"),
+                detected_format=payload_check.file_format,
+                dataset_size=len(content or b""),
+            )
+
         # 3) Detect + validate (handle ZIP)
-        detected = detect_format(content, url=final_url, metadata=metadata)
+        detected = payload_check.file_format or detect_format(
+            content, url=final_url, metadata=metadata
+        )
         member_name = None
 
         if detected == "zip":
@@ -239,6 +287,8 @@ class DatasetAcquisitionService:
                 "size": len(content),
                 "path": save_result.local_path,
                 "member": member_name,
+                "provider": payload.get("provider"),
+                "source_url": final_url,
             },
         )
 

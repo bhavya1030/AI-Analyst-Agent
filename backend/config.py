@@ -97,7 +97,11 @@ class Settings(BaseSettings):
     DATASET_SOURCES: dict[str, str] = {
         "gdp": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
         "population": "https://raw.githubusercontent.com/datasets/population/master/data/population.csv",
-        "inflation": "https://raw.githubusercontent.com/datasets/inflation/master/data/cpi.csv",
+        # Direct World Bank indicator JSON (old GitHub cpi.csv path is 404)
+        "inflation": (
+            "https://api.worldbank.org/v2/country/all/indicator/FP.CPI.TOTL.ZG"
+            "?format=json&per_page=20000"
+        ),
     }
     MODEL_ROUTING_DEFAULTS: dict[str, Any] = {
         "default_plan": [

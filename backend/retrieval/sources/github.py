@@ -9,7 +9,7 @@ from backend.retrieval.sources.common import guess_format, score_text, topic_tok
 GITHUB_RAW = {
     "gdp": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
     "population": "https://raw.githubusercontent.com/datasets/population/master/data/population.csv",
-    "inflation": "https://raw.githubusercontent.com/datasets/inflation/master/data/cpi.csv",
+    # Removed broken datasets/inflation cpi.csv (HTTP 404). Use World Bank provider instead.
     "unemployment": "https://raw.githubusercontent.com/datasets/unemployment/master/data/unemployment.csv",
     "gold": "https://raw.githubusercontent.com/datasets/gold-prices/master/data/annual.csv",
     "gold price": "https://raw.githubusercontent.com/datasets/gold-prices/master/data/annual.csv",
