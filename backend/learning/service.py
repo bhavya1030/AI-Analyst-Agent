@@ -344,13 +344,14 @@ class DatasetLearningService:
             or "Untitled dataset"
         )
         source = (
-            r_meta.get("source")
+            r_meta.get("provider")
+            or r_meta.get("source")
             or r.get("provider")
             or a.get("provider")
             or ""
         )
         source_type = r_meta.get("source_type") or _source_type_from_provider(
-            r.get("provider") or a.get("provider")
+            r.get("provider") or a.get("provider") or r_meta.get("provider")
         )
 
         download_url = (
@@ -379,6 +380,17 @@ class DatasetLearningService:
         )
 
         tags = list(r_meta.get("tags") or [])
+        # Provenance tags for multi-provider retrieval
+        for key, prefix in (
+            ("provider", "provider:"),
+            ("license", "license:"),
+            ("dataset_version", "version:"),
+        ):
+            val = r_meta.get(key)
+            if val:
+                label = f"{prefix}{val}"
+                if label not in tags and str(val) not in tags:
+                    tags.append(label)
         columns = list(p.get("column_names") or r_meta.get("columns") or [])
         row_count = p.get("row_count")
         if row_count is None and a.get("dataset_size") is not None:
@@ -387,6 +399,22 @@ class DatasetLearningService:
         date_range = p.get("date_range")
         description = r_meta.get("description") or ""
         summary = r_meta.get("summary") or ""
+        # Persist download provenance in summary for operators / audit
+        provenance_bits = []
+        if r_meta.get("provider") or source:
+            provenance_bits.append(f"provider={r_meta.get('provider') or source}")
+        if r_meta.get("license"):
+            provenance_bits.append(f"license={r_meta.get('license')}")
+        if r_meta.get("dataset_version"):
+            provenance_bits.append(f"version={r_meta.get('dataset_version')}")
+        src_url = r_meta.get("source_url") or download_url
+        if src_url:
+            provenance_bits.append(f"source_url={src_url}")
+        if r_meta.get("download_timestamp"):
+            provenance_bits.append(f"downloaded_at={r_meta.get('download_timestamp')}")
+        if provenance_bits:
+            line = "Provenance: " + "; ".join(provenance_bits)
+            summary = f"{summary}\n{line}".strip() if summary else line
 
         return LearningInput(
             dataset_id=dataset_id,

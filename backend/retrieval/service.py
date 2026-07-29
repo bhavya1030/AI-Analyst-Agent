@@ -11,8 +11,7 @@ from typing import Any, Optional
 from backend.core.logger import get_logger
 from backend.retrieval.agent import DatasetRetrievalAgent
 from backend.retrieval.models import DatasetRequest, RetrievalResult
-from backend.retrieval.providers.internet_search_provider import InternetSearchProvider
-from backend.retrieval.providers.official_api_provider import OfficialApiProvider
+from backend.retrieval.providers.open_data_provider import OpenDataProvider
 from backend.retrieval.providers.registry_provider import RegistryProvider
 from backend.retrieval.providers.semantic_provider import SemanticProvider
 from backend.retrieval.providers.session_provider import SessionProvider
@@ -44,12 +43,13 @@ def _build_default_agent() -> DatasetRetrievalAgent:
         get_dataset_path=get_dataset_path,
     )
 
+    # OpenDataProvider: multi-provider chain with URL/content validation.
+    # Replaces OfficialApi + InternetSearch HTML search pages (OECD 403, etc.).
     providers = [
         session_provider,
         registry_provider,  # exact / topic match
         semantic_provider,  # embedding similarity (SEMANTIC_HIT)
-        OfficialApiProvider(),  # World Bank, OECD, IMF
-        InternetSearchProvider(),  # GitHub, HuggingFace, Wikipedia
+        OpenDataProvider(),  # World Bank / OWID / GitHub raw / JSON APIs / data.gov / HF / CSV URLs
         UserUploadProvider(),  # placeholder
     ]
     return DatasetRetrievalAgent(providers=providers)
@@ -62,7 +62,8 @@ def get_retrieval_agent() -> DatasetRetrievalAgent:
     return _default_agent
 
 
-def set_retrieval_agent(agent: DatasetRetrievalAgent) -> None:
+def set_retrieval_agent(agent: DatasetRetrievalAgent | None) -> None:
+    """Inject agent for tests. Pass None to rebuild the default provider chain."""
     global _default_agent
     _default_agent = agent
 

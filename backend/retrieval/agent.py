@@ -28,9 +28,9 @@ class DatasetRetrievalAgent:
       1. SessionProvider
       2. RegistryProvider (exact/topic match)
       3. SemanticProvider (embedding similarity over registry index)
-      4. OfficialApiProvider (World Bank, OECD, IMF)
-      5. InternetSearchProvider (GitHub, HuggingFace, Wikipedia)
-      6. UserUploadProvider (placeholder)
+      4. OpenDataProvider (multi-provider chain: World Bank, OWID, GitHub raw,
+         JSON APIs, data.gov, Hugging Face, direct CSV URLs — with validation)
+      5. UserUploadProvider (placeholder)
 
     If nothing resolves: SEARCH_REQUIRED.
     """
