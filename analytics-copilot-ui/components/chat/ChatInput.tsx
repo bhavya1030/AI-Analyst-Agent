@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { ArrowUp, Loader2 } from "lucide-react";
 import { askQuestion } from "@/services/api";
 import { useChatStore } from "@/store/chatStore";
+import { useUiStore } from "@/store/uiStore";
 import { ChatMessage } from "@/types";
 
 export default function ChatInput() {
@@ -21,6 +22,8 @@ export default function ChatInput() {
     setDatasetName,
     ensureServerSession,
   } = useChatStore();
+  const setAnalysisTab = useUiStore((s) => s.setAnalysisTab);
+  const pushNotification = useUiStore((s) => s.pushNotification);
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -40,16 +43,15 @@ export default function ChatInput() {
       addMessage(userMessage);
 
       try {
-        // Ensure durable backend session exists before /ask (Phase 9)
         const activeSessionId = await ensureServerSession(
           text.trim().slice(0, 60) || "New analysis"
         );
 
-        // Prefer open-data discovery for named public topics so a sticky upload
-        // (or old file_path) does not force the wrong dataset (e.g. GDP vs gold).
         const lower = text.trim().toLowerCase();
         const shouldPreferDiscovery =
-          /analyze|analyse|study|explore|forecast|predict|dataset about|data on/.test(lower) &&
+          /analyze|analyse|study|explore|forecast|predict|dataset about|data on/.test(
+            lower
+          ) &&
           !/(upload|this file|my file|\.csv|\.xlsx)/.test(lower) &&
           /(gold|silver|oil|bitcoin|gdp|population|inflation|covid|climate|stock|unemployment)/.test(
             lower
@@ -112,6 +114,11 @@ export default function ChatInput() {
         if (payload.dataset_topic) {
           setDatasetName(payload.dataset_topic);
         }
+
+        // Surface results on the canvas
+        if (payload.forecast?.length) setAnalysisTab("forecast");
+        else if (payload.charts?.length || payload.chart) setAnalysisTab("charts");
+        else setAnalysisTab("overview");
       } catch {
         setError("Backend unreachable. Start the API at http://localhost:8000.");
         addMessage({
@@ -119,6 +126,11 @@ export default function ChatInput() {
           role: "assistant",
           text: "I could not reach the analytics backend. Please ensure the server is running.",
           timestamp: Date.now(),
+        });
+        pushNotification({
+          title: "Backend unreachable",
+          body: "Could not complete analysis. Check that the API is running.",
+          kind: "warning",
         });
       } finally {
         setLoading(false);
@@ -129,7 +141,9 @@ export default function ChatInput() {
       addMessage,
       ensureServerSession,
       filePath,
+      pushNotification,
       sessionId,
+      setAnalysisTab,
       setDatasetName,
       setForecast,
       setHypotheses,
@@ -157,12 +171,12 @@ export default function ChatInput() {
   return (
     <div>
       <form className="relative" onSubmit={handleSubmit}>
-        <div className="flex items-end gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-soft transition focus-within:border-blue-400 focus-within:shadow-[0_0_0_3px_rgba(37,99,235,0.1)]">
+        <div className="flex items-end gap-2 rounded-2xl border border-border bg-surface p-1.5 shadow-soft transition focus-within:border-accent focus-within:shadow-glow">
           <textarea
             id="question"
             rows={2}
-            className="max-h-36 min-h-[44px] flex-1 resize-none border-0 bg-transparent px-2.5 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 disabled:opacity-60"
-            placeholder='Ask anything… e.g. "Analyze India GDP" or paste a CSV URL'
+            className="max-h-32 min-h-[40px] flex-1 resize-none border-0 bg-transparent px-2.5 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
+            placeholder='Ask anything… e.g. "Analyze India GDP"'
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={(e) => {
@@ -176,22 +190,22 @@ export default function ChatInput() {
           <button
             type="submit"
             disabled={loading || !prompt.trim()}
-            className="btn-primary h-10 w-10 shrink-0 !rounded-xl !p-0"
+            className="btn-primary h-9 w-9 shrink-0 !rounded-xl !p-0"
             aria-label="Send message"
           >
-            {loading ? <Loader2 className="animate-spin" size={16} /> : <ArrowUp size={16} />}
+            {loading ? <Loader2 className="animate-spin" size={15} /> : <ArrowUp size={15} />}
           </button>
         </div>
       </form>
-      <div className="mt-1.5 flex items-center justify-between gap-2 px-1">
-        <p className="text-[11px] text-slate-400">
+      <div className="mt-1 flex items-center justify-between gap-2 px-1">
+        <p className="text-[10px] text-muted-foreground">
           {filePath ? (
-            <span className="text-emerald-600">Using uploaded file for this chat</span>
+            <span className="text-success">Using uploaded file</span>
           ) : (
-            "No upload — open-data discovery enabled"
+            "Open-data discovery enabled"
           )}
         </p>
-        {error ? <p className="text-[11px] font-medium text-red-500">{error}</p> : null}
+        {error ? <p className="text-[10px] font-medium text-danger">{error}</p> : null}
       </div>
     </div>
   );
