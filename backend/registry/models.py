@@ -1,4 +1,4 @@
-"""Dataset Registry models: domain metadata + SQLAlchemy persistence entity.
+"""Dataset Registry models: rich metadata + SQLAlchemy persistence entity.
 
 Metadata only — no DataFrames, charts, insights, or session payloads.
 """
@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import Boolean, Column, Float, Integer, String, Text
+from sqlalchemy import Boolean, Column, Integer, String, Text
 
 from backend.db import Base
 
@@ -33,7 +33,7 @@ class DatasetMetadata:
     """Canonical registry record. Safe to serialize; never holds analysis artifacts."""
 
     dataset_id: str
-    title: str
+    title: str  # Dataset Name
     topic: str
     description: str = ""
     source: str = ""
@@ -42,7 +42,11 @@ class DatasetMetadata:
     local_path: Optional[str] = None
     file_format: str = "unknown"  # csv | json | parquet | xlsx | xls | unknown
     tags: list[str] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
     columns: list[str] = field(default_factory=list)
+    domain: str = "general"
+    country: list[str] = field(default_factory=list)  # countries / regions covered
+    metrics: list[str] = field(default_factory=list)  # measurable fields / KPIs
     row_count: Optional[int] = None
     date_range: Optional[dict[str, Any]] = None  # e.g. {"start": "2019", "end": "2024"}
     summary: str = ""
@@ -51,7 +55,8 @@ class DatasetMetadata:
     last_updated: str = field(default_factory=_utc_now_iso)
     usage_count: int = 0
     checksum: Optional[str] = None
-    embedding_ref: Optional[str] = None  # placeholder for future semantic search
+    fingerprint: Optional[str] = None  # content / schema fingerprint (often == checksum)
+    embedding_ref: Optional[str] = None  # semantic index reference
     is_active: bool = True
 
     def to_dict(self) -> dict[str, Any]:
@@ -65,6 +70,16 @@ class DatasetMetadata:
         known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
         payload = {k: v for k, v in data.items() if k in known}
 
+        # Aliases from older payloads / learning
+        if "country" not in payload and data.get("countries_regions"):
+            payload["country"] = data.get("countries_regions")
+        if "keywords" not in payload and data.get("topic_keywords"):
+            payload["keywords"] = data.get("topic_keywords")
+        if not payload.get("fingerprint") and data.get("checksum"):
+            payload["fingerprint"] = data.get("checksum")
+        if not payload.get("domain") and data.get("domain"):
+            payload["domain"] = data.get("domain")
+
         if not payload.get("dataset_id"):
             payload["dataset_id"] = new_dataset_id()
         if not payload.get("created_at"):
@@ -72,7 +87,6 @@ class DatasetMetadata:
         if not payload.get("last_updated"):
             payload["last_updated"] = payload["created_at"]
 
-        # Required string fields with safe defaults (service validates further)
         payload.setdefault("title", "")
         payload.setdefault("topic", "")
         if payload.get("title") is None:
@@ -80,8 +94,7 @@ class DatasetMetadata:
         if payload.get("topic") is None:
             payload["topic"] = ""
 
-        # Normalize list fields
-        for key in ("tags", "columns"):
+        for key in ("tags", "columns", "keywords", "country", "metrics"):
             value = payload.get(key)
             if value is None:
                 payload[key] = []
@@ -90,6 +103,10 @@ class DatasetMetadata:
 
         if payload.get("usage_count") is None:
             payload["usage_count"] = 0
+        if not payload.get("domain"):
+            payload["domain"] = "general"
+        if not payload.get("fingerprint") and payload.get("checksum"):
+            payload["fingerprint"] = payload.get("checksum")
 
         return cls(**payload)
 
@@ -116,9 +133,12 @@ class DatasetRegistryRecord(Base):
     download_url = Column(String, nullable=True, index=True)
     local_path = Column(String, nullable=True)
     file_format = Column(String, default="unknown")
-    # JSON stored as text for portability across SQLite / Postgres
     tags_json = Column(Text, default="[]")
+    keywords_json = Column(Text, default="[]")
     columns_json = Column(Text, default="[]")
+    domain = Column(String, default="general", index=True)
+    country_json = Column(Text, default="[]")
+    metrics_json = Column(Text, default="[]")
     row_count = Column(Integer, nullable=True)
     date_range_json = Column(Text, nullable=True)
     summary = Column(Text, default="")
@@ -127,5 +147,6 @@ class DatasetRegistryRecord(Base):
     last_updated = Column(String, nullable=False)
     usage_count = Column(Integer, default=0)
     checksum = Column(String, nullable=True, index=True)
+    fingerprint = Column(String, nullable=True, index=True)
     embedding_ref = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)

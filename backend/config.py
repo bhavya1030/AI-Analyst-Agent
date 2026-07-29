@@ -19,7 +19,11 @@ class Settings(BaseSettings):
     SIMILARITY_THRESHOLD: int = 55
     # Semantic retrieval (cosine / IP on normalized embeddings, 0–1)
     SEMANTIC_SEARCH_TOP_K: int = 5
-    SEMANTIC_MIN_SCORE: float = 0.35
+    # Raised from 0.35 — low floor caused Olympics/Atlantis false semantic hits
+    SEMANTIC_MIN_SCORE: float = 0.55
+    # Multi-signal registry match threshold (0–1)
+    REGISTRY_MIN_CONFIDENCE: float = 0.62
+    REGISTRY_SEMANTIC_FLOOR: float = 0.45
     CHART_DEFAULT_LIMIT: int = 4
     OLLAMA_MODEL: str = "qwen3:4b"
     OLLAMA_SERVER_URL: str = "http://localhost:11434"
