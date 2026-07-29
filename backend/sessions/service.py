@@ -39,6 +39,11 @@ _PHASE3_COLUMNS: dict[str, str] = {
     "memory_state": "JSON",
 }
 
+_MESSAGE_PHASE7_COLUMNS: dict[str, str] = {
+    "is_summarized": "BOOLEAN DEFAULT 0",
+    "summary_group_id": "VARCHAR(36)",
+}
+
 SORTABLE_FIELDS = frozenset(
     {
         "updated_at",
@@ -68,8 +73,9 @@ def ensure_session_tables() -> None:
             SessionArtifact.__table__.create(bind=engine, checkfirst=True)
             _schema_ready = True
             logger.info("Session persistence tables ready")
-        # Always reconcile Phase-3/4 columns (safe if already present)
+        # Always reconcile Phase-3/4/7 columns (safe if already present)
         _ensure_phase3_columns()
+        _ensure_message_phase7_columns()
         try:
             from backend.sessions.search import ensure_session_fts
 
@@ -79,7 +85,7 @@ def ensure_session_tables() -> None:
 
 
 def _ensure_phase3_columns() -> None:
-    """Add Phase-3 columns to existing SQLite tables (idempotent)."""
+    """Add Phase-3+ columns to existing SQLite tables (idempotent)."""
     try:
         with engine.begin() as connection:
             inspector = inspect(connection)
@@ -98,6 +104,30 @@ def _ensure_phase3_columns() -> None:
     except Exception as exc:
         logger.warning(
             "Phase-3 column migration skipped",
+            extra={"error": str(exc)},
+        )
+
+
+def _ensure_message_phase7_columns() -> None:
+    """Add summarization flags to session_messages (idempotent)."""
+    try:
+        with engine.begin() as connection:
+            inspector = inspect(connection)
+            if "session_messages" not in inspector.get_table_names():
+                return
+            existing = {
+                col["name"] for col in inspector.get_columns("session_messages")
+            }
+            for name, col_type in _MESSAGE_PHASE7_COLUMNS.items():
+                if name in existing:
+                    continue
+                connection.execute(
+                    text(f"ALTER TABLE session_messages ADD COLUMN {name} {col_type}")
+                )
+                logger.info("Added session_messages column", extra={"column": name})
+    except Exception as exc:
+        logger.warning(
+            "Phase-7 message column migration skipped",
             extra={"error": str(exc)},
         )
 
@@ -1149,13 +1179,9 @@ class SessionService:
 
             row.last_query = question or row.last_query
             row.last_insight = answer
-            # Keep conversation_summary fresh for FTS (lightweight rolling digest)
-            if answer:
-                prev = (row.conversation_summary or "").strip()
-                digest = answer.strip()[:500]
-                row.conversation_summary = (
-                    f"{prev}\n{digest}".strip()[-2000:] if prev else digest
-                )
+            # Seed summary only when empty (Phase 7 owns full summarization)
+            if answer and not (row.conversation_summary or "").strip():
+                row.conversation_summary = answer.strip()[:500]
             row.updated_at = now
             row.last_activity_at = now
 
@@ -1204,6 +1230,20 @@ class SessionService:
             self._dual_write_legacy(db, row)
             self._reindex(session_id)
 
+            # Phase 7: fold older messages when conversation grows long
+            summary_info = None
+            try:
+                from backend.sessions.summarizer import maybe_summarize_session
+
+                summary_info = maybe_summarize_session(session_id)
+                if summary_info:
+                    self._reindex(session_id)
+            except Exception as sum_exc:
+                logger.debug(
+                    "Summarization skipped",
+                    extra={"session_id": session_id, "error": str(sum_exc)},
+                )
+
             logger.info(
                 "Assistant turn persisted",
                 extra={
@@ -1212,11 +1252,14 @@ class SessionService:
                     "artifact_count": len(artifact_ids),
                 },
             )
-            return {
+            result_payload = {
                 "message_id": msg_id,
                 "seq": seq,
                 "artifact_ids": artifact_ids,
             }
+            if summary_info:
+                result_payload["summarization"] = summary_info
+            return result_payload
         finally:
             db.close()
 
@@ -1709,6 +1752,8 @@ class SessionService:
                 "content": m.content or "",
                 "created_at": m.created_at,
                 "payload": m.payload,
+                "is_summarized": bool(getattr(m, "is_summarized", False)),
+                "summary_group_id": getattr(m, "summary_group_id", None),
             }
             for m in messages
         ]
@@ -1769,6 +1814,8 @@ class SessionService:
                 "last_operation": row.last_operation or "",
                 "last_forecast_target": row.last_forecast_target or "",
                 "eda_summary": row.eda_summary or {},
+                # Phase 7 — durable conversation summary
+                "conversation_summary": getattr(row, "conversation_summary", None) or "",
             }
         )
 

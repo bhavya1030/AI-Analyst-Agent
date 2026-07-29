@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     LEARN_DATASETS: bool = True
     # Use Ollama to expand aliases when learning a new dataset topic (can be slow).
     USE_LLM_LEARN: bool = False
+    # Phase 7 — automatic conversation summarization
+    # Trigger when total messages exceed this count.
+    CONVERSATION_SUMMARY_THRESHOLD: int = 20
+    # Keep this many most-recent messages verbatim (not folded into summary).
+    CONVERSATION_SUMMARY_KEEP_RECENT: int = 12
+    # Use Ollama for narrative summary when True; otherwise deterministic extractive.
+    USE_LLM_SUMMARY: bool = False
 
     @field_validator("OLLAMA_MODEL", "OLLAMA_SERVER_URL", mode="before")
     def _strip_ollama_strings(cls, value: str) -> str:
