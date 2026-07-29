@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     # Topic extraction via Ollama only when rule-based topic is weak/empty.
     # Keep False for snappy UX; set True if you want freer natural-language topics.
     USE_LLM_TOPIC: bool = False
+    # Optional LLM refinement of auto-generated dataset titles/descriptions.
+    USE_LLM_METADATA: bool = False
     # Persist successful topic→dataset mappings (product memory, not weight training).
     LEARN_DATASETS: bool = True
     # Use Ollama to expand aliases when learning a new dataset topic (can be slow).

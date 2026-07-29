@@ -77,6 +77,23 @@ def dataset_prepare_agent(state):
             "source_type": "Upload",
         }
         state["source"] = "user_upload"
+        # Enrich uploads with generated metadata + registry entry
+        try:
+            from backend.metadata import generate_and_register_dataset_metadata
+            from backend.metadata.models import is_placeholder_label
+
+            generate_and_register_dataset_metadata(
+                state,
+                local_path=state["file_path"],
+                register=True,
+            )
+            if is_placeholder_label(topic) and state.get("dataset_topic"):
+                topic = state["dataset_topic"]
+        except Exception as exc:
+            logger.warning(
+                "Upload metadata generation failed",
+                extra={"error": str(exc)},
+            )
         return state
 
     # Failure: retrieval asked for user or nothing usable
@@ -209,4 +226,49 @@ def _acquire_profile_learn(state, retrieval, topic):
     state["dataset_metadata"] = meta
     state["source"] = retrieval.get("provider") or "acquisition"
     state["dataset_topic"] = topic
+
+    # When topic is still a placeholder, refine from profile/columns/path
+    try:
+        from backend.metadata import generate_and_register_dataset_metadata
+        from backend.metadata.models import is_placeholder_label
+
+        if is_placeholder_label(topic) or not meta.get("title"):
+            generate_and_register_dataset_metadata(
+                state,
+                local_path=local_path,
+                register=False,  # already learned above
+            )
+            # Still update registry title if we refined after learn
+            if state.get("generated_metadata") and state.get("dataset_id"):
+                try:
+                    from backend.registry import get_by_dataset_id, update_dataset
+
+                    gm = state["generated_metadata"]
+                    row = get_by_dataset_id(state["dataset_id"])
+                    if row is not None and gm.get("title"):
+                        payload = row.to_dict()
+                        if not payload.get("title") or is_placeholder_label(payload.get("title")):
+                            payload["title"] = gm["title"]
+                        if not payload.get("topic") or is_placeholder_label(payload.get("topic")):
+                            payload["topic"] = gm.get("topic") or gm["title"]
+                        for key in (
+                            "description",
+                            "domain",
+                            "summary",
+                            "tags",
+                            "keywords",
+                            "country",
+                            "metrics",
+                        ):
+                            if gm.get(key) and not payload.get(key):
+                                payload[key] = gm[key]
+                        update_dataset(payload)
+                except Exception as reg_exc:
+                    logger.warning(
+                        "Post-learn metadata title update failed",
+                        extra={"error": str(reg_exc)},
+                    )
+    except Exception as exc:
+        logger.warning("Metadata refine after acquire failed", extra={"error": str(exc)})
+
     return state

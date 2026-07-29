@@ -1256,8 +1256,24 @@ class SessionService:
                 row.last_forecast_target = safe_result.get("last_forecast_target")
             if safe_result.get("dataset_topic") is not None:
                 row.dataset_topic = safe_result.get("dataset_topic")
-                if not row.dataset_name:
-                    row.dataset_name = safe_result.get("dataset_topic")
+            # Prefer human title from auto-metadata over "user provided dataset"
+            display_name = (
+                safe_result.get("dataset_name")
+                or safe_result.get("dataset_title")
+                or (safe_result.get("dataset_metadata") or {}).get("title")
+                or safe_result.get("dataset_topic")
+            )
+            if display_name:
+                from backend.metadata.models import is_placeholder_label
+
+                if not row.dataset_name or is_placeholder_label(row.dataset_name):
+                    if not is_placeholder_label(display_name):
+                        row.dataset_name = display_name
+                    elif not row.dataset_name:
+                        row.dataset_name = display_name
+                if row.dataset_topic and is_placeholder_label(row.dataset_topic):
+                    if not is_placeholder_label(display_name):
+                        row.dataset_topic = display_name
 
             profile = safe_result.get("dataset_profile") or {}
             if profile:
@@ -1482,11 +1498,39 @@ class SessionService:
 
         if dataset_id:
             row.dataset_id = str(dataset_id)
-        if topic:
-            row.dataset_topic = topic
-            if not row.dataset_name:
-                row.dataset_name = topic
+        display_name = (
+            result.get("dataset_name")
+            or result.get("dataset_title")
+            or (result.get("dataset_metadata") or {}).get("title")
+            or topic
+        )
+        try:
+            from backend.metadata.models import is_placeholder_label
+        except Exception:
+            def is_placeholder_label(v):  # type: ignore
+                return (v or "").strip().lower() in {
+                    "user provided dataset",
+                    "user provided url",
+                    "general dataset",
+                    "",
+                }
 
+        if topic:
+            if not row.dataset_topic or is_placeholder_label(row.dataset_topic):
+                row.dataset_topic = (
+                    display_name
+                    if display_name and not is_placeholder_label(display_name)
+                    else topic
+                )
+            else:
+                row.dataset_topic = topic
+        if display_name and not is_placeholder_label(display_name):
+            if not row.dataset_name or is_placeholder_label(row.dataset_name):
+                row.dataset_name = display_name
+        elif topic and (not row.dataset_name or is_placeholder_label(row.dataset_name)):
+            row.dataset_name = topic
+
+        meta = result.get("dataset_metadata") or result.get("generated_metadata") or {}
         row.current_dataset = sanitize_for_json(
             {
                 "dataset_id": row.dataset_id,
@@ -1494,8 +1538,13 @@ class SessionService:
                 "dataset_path": row.dataset_path,
                 "dataset_url": row.dataset_url,
                 "dataset_topic": row.dataset_topic,
+                "title": meta.get("title") or row.dataset_name,
+                "domain": meta.get("domain"),
+                "country": meta.get("country"),
+                "metrics": meta.get("metrics"),
+                "summary": meta.get("summary"),
                 "columns": result.get("columns") or row.last_columns or [],
-                "rows": result.get("rows") or 0,
+                "rows": result.get("rows") or meta.get("row_count") or 0,
                 "source": result.get("source") or result.get("dataset_source"),
             }
         )

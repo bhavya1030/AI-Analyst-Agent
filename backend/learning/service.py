@@ -281,9 +281,11 @@ class DatasetLearningService:
             for c in existing.country or []:
                 if c not in countries:
                     countries.append(c)
-        metrics: list[str] = []
+        metrics: list[str] = list(getattr(incoming, "metrics", None) or [])
         if existing and getattr(existing, "metrics", None):
-            metrics.extend(list(existing.metrics or []))
+            for m in existing.metrics or []:
+                if m not in metrics:
+                    metrics.append(m)
         domain = (
             incoming.domain
             or (getattr(existing, "domain", None) if existing else None)
@@ -361,6 +363,7 @@ class DatasetLearningService:
         topic = (
             r.get("topic")
             or r_meta.get("topic")
+            or r_meta.get("title")
             or p.get("topic")
             or ""
         )
@@ -370,6 +373,19 @@ class DatasetLearningService:
             or topic
             or "Untitled dataset"
         )
+        # Avoid persisting generic upload placeholders as registry titles
+        _placeholders = {
+            "user provided dataset",
+            "user provided url",
+            "general dataset",
+            "active session dataset",
+            "untitled dataset",
+            "dataset",
+        }
+        if str(title).strip().lower() in _placeholders:
+            title = r_meta.get("title") or topic if str(topic).strip().lower() not in _placeholders else title
+        if str(topic).strip().lower() in _placeholders and r_meta.get("title"):
+            topic = str(r_meta.get("title"))
         source = (
             r_meta.get("provider")
             or r_meta.get("source")
@@ -465,7 +481,12 @@ class DatasetLearningService:
             or r_meta.get("countries")
             or []
         )
-        metrics = list(r_meta.get("metrics") or [])
+        metrics = list(
+            r_meta.get("metrics")
+            or p.get("numeric_metrics")
+            or p.get("metrics")
+            or []
+        )
         if not metrics and columns:
             # Heuristic: numeric-looking column names as metrics
             for c in columns:
@@ -478,6 +499,11 @@ class DatasetLearningService:
                     )
                 ):
                     metrics.append(str(c))
+
+        # Prefer rich tags from generated metadata
+        for t in r_meta.get("tags") or []:
+            if t and t not in tags:
+                tags.append(t)
 
         return LearningInput(
             dataset_id=dataset_id,
@@ -496,10 +522,13 @@ class DatasetLearningService:
             summary=str(summary or ""),
             checksum=checksum,
             domain=domain,
-            time_column=p.get("time_column"),
-            entity_column=p.get("entity_column"),
+            time_column=p.get("time_column") or r_meta.get("time_column"),
+            entity_column=p.get("entity_column")
+            or r_meta.get("entity_column")
+            or r_meta.get("primary_entity"),
             countries_regions=countries,
             topic_keywords=topic_keywords,
+            metrics=[str(m) for m in metrics],
             dataset_type=str(p.get("dataset_type") or "unknown"),
         )
 
