@@ -197,10 +197,26 @@ class MemoryHierarchyService:
                 )
                 for m in rows
             ]
+            # L1 anchors: previous user question + latest assistant response + intent
+            previous_question = None
+            current_response = None
+            current_intent = None
+            for m in reversed(messages):
+                if previous_question is None and m.role == "user":
+                    previous_question = m.content
+                if current_response is None and m.role == "assistant":
+                    current_response = m.content
+                if previous_question and current_response:
+                    break
+            if sess is not None:
+                current_intent = getattr(sess, "last_intent", None)
             return ConversationMemory(
                 messages=messages,
                 window_size=self.l1_window,
                 conversation_summary=str(summary or ""),
+                current_intent=current_intent,
+                previous_question=previous_question,
+                current_response=(current_response or "")[:2000] or None,
             )
         finally:
             db.close()
@@ -232,17 +248,29 @@ class MemoryHierarchyService:
                 or blob.get("last_forecast_target"),
                 last_columns=list(row.last_columns or blob.get("last_columns") or []),
                 last_column=row.last_column or blob.get("last_column"),
+                selected_columns=list(
+                    blob.get("selected_columns")
+                    or row.last_used_columns
+                    or row.last_columns
+                    or []
+                ),
                 dataset_topic=row.dataset_topic or blob.get("dataset_topic"),
                 dataset_id=row.dataset_id or blob.get("dataset_id"),
                 dataset_path=row.dataset_path or blob.get("dataset_path"),
                 dataset_url=row.dataset_url or blob.get("dataset_url"),
                 dataset_fingerprint=blob.get("dataset_fingerprint"),
+                dataset_name=row.dataset_name or blob.get("dataset_name"),
                 dataset_profile_summary=dict(
                     row.eda_summary or blob.get("dataset_profile_summary") or {}
                 ),
                 metrics=list(blob.get("metrics") or []),
                 entities=list(blob.get("entities") or []),
                 filters=list(blob.get("filters") or []),
+                chart_types=list(blob.get("chart_types") or []),
+                artifact_ids=list(blob.get("artifact_ids") or []),
+                forecast_model=blob.get("forecast_model"),
+                forecast_horizon=blob.get("forecast_horizon"),
+                has_forecast=bool(blob.get("has_forecast")),
                 last_insight=row.last_insight or blob.get("last_insight"),
                 last_query=row.last_query or blob.get("last_query"),
                 hypotheses=list(blob.get("hypotheses") or []),
@@ -372,6 +400,12 @@ class MemoryHierarchyService:
         ]
         if l1.conversation_summary and not state.get("conversation_summary"):
             state["conversation_summary"] = l1.conversation_summary
+        if l1.previous_question and not state.get("previous_question"):
+            state["previous_question"] = l1.previous_question
+        if l1.current_response and not state.get("previous_response"):
+            state["previous_response"] = l1.current_response
+        if l1.current_intent and not state.get("last_intent"):
+            state["last_intent"] = l1.current_intent
 
         # L2 → continuity fields only when empty (do not fight topic_mismatch clears)
         if not state.get("topic_mismatch"):
@@ -387,8 +421,14 @@ class MemoryHierarchyService:
                 state["last_columns_used"] = list(l2.last_columns)
             if not state.get("last_column_used") and l2.last_column:
                 state["last_column_used"] = l2.last_column
+            if not state.get("selected_columns") and (
+                l2.selected_columns or l2.last_columns
+            ):
+                state["selected_columns"] = list(l2.selected_columns or l2.last_columns)
             if not state.get("dataset_topic") and l2.dataset_topic:
                 state["dataset_topic"] = l2.dataset_topic
+            if not state.get("dataset_name") and l2.dataset_name:
+                state["dataset_name"] = l2.dataset_name
             if not state.get("dataset_url") and l2.dataset_url:
                 state["dataset_url"] = l2.dataset_url
             if not state.get("dataset_id") and l2.dataset_id:
@@ -397,6 +437,24 @@ class MemoryHierarchyService:
                 state["dataset_profile"] = dict(l2.dataset_profile_summary)
             if not state.get("dataset_fingerprint") and l2.dataset_fingerprint:
                 state["dataset_fingerprint"] = l2.dataset_fingerprint
+            # Paths for reload / planner
+            if l2.dataset_path:
+                if not state.get("file_path"):
+                    state["file_path"] = l2.dataset_path
+                if not state.get("local_path"):
+                    state["local_path"] = l2.dataset_path
+                if not state.get("dataset_path"):
+                    state["dataset_path"] = l2.dataset_path
+            if l2.filters and not state.get("filters"):
+                state["filters"] = list(l2.filters)
+            if l2.metrics and not state.get("metrics"):
+                state["metrics"] = list(l2.metrics)
+            if l2.has_forecast and not state.get("forecast_model"):
+                state["session_had_forecast"] = True
+                if l2.forecast_model:
+                    state["forecast_model"] = l2.forecast_model
+            if l2.forecast_horizon and not state.get("forecast_horizon"):
+                state["forecast_horizon"] = l2.forecast_horizon
 
         if l2.hypotheses and not state.get("hypotheses"):
             state["hypotheses"] = list(l2.hypotheses)
@@ -414,8 +472,17 @@ class MemoryHierarchyService:
                 state["prior_dataset_insights"] = list(l3.insights_digest)[-5:]
             if l3.analysis_count:
                 state["dataset_prior_analysis_count"] = int(l3.analysis_count)
+            # Path fallback from L3 when L2 path missing
+            if not state.get("topic_mismatch"):
+                if not state.get("file_path") and l3.dataset_path:
+                    state["file_path"] = l3.dataset_path
+                    state["local_path"] = state.get("local_path") or l3.dataset_path
+                if not state.get("dataset_url") and l3.dataset_url:
+                    state["dataset_url"] = l3.dataset_url
+                if not state.get("dataset_fingerprint") and l3.dataset_fingerprint:
+                    state["dataset_fingerprint"] = l3.dataset_fingerprint
 
-        # L4 → related / known datasets
+        # L4 → related / known datasets (Knowledge Memory)
         related = []
         for item in (l4.learned_datasets or [])[:5]:
             if isinstance(item, dict):
@@ -428,8 +495,39 @@ class MemoryHierarchyService:
         if l4.topic_hint and not state.get("knowledge_topic_hint"):
             state["knowledge_topic_hint"] = l4.topic_hint
 
-        return state
+        # --- Memory v2: auto-restore dataframe for planner ---
+        if not state.get("topic_mismatch") and state.get("data") is None:
+            try:
+                from backend.memory.restore import apply_restored_frame, restore_dataframe
 
+                df = restore_dataframe(
+                    dataset_path=l2.dataset_path or state.get("dataset_path"),
+                    dataset_url=l2.dataset_url or state.get("dataset_url"),
+                    local_path=state.get("local_path"),
+                    file_path=state.get("file_path"),
+                )
+                if df is not None:
+                    apply_restored_frame(state, df)
+                    state["session_dataframe_restored"] = True
+            except Exception as exc:
+                logger.warning(
+                    "Session dataframe restore failed",
+                    extra={"error": str(exc)},
+                )
+
+        # Planner injection flags — never request upload when dataset is bound
+        try:
+            from backend.memory.continuity import build_planner_injection
+
+            state.update(build_planner_injection(state))
+        except Exception:
+            if state.get("data") is not None and not state.get("topic_mismatch"):
+                state["reuse_active_dataset"] = True
+                state["has_active_dataset"] = True
+                state["needs_user_data"] = False
+                state["planner_skip_upload"] = True
+
+        return state
     # ------------------------------------------------------------------
     # Persist after graph run
     # ------------------------------------------------------------------
@@ -510,6 +608,35 @@ class MemoryHierarchyService:
             l2.recommended_next_steps = list(result.get("recommended_next_steps") or [])[:20]
         if result.get("detected_patterns"):
             l2.detected_patterns = list(result.get("detected_patterns") or [])[:20]
+        # Memory v2 session fields
+        sel = result.get("selected_columns") or result.get("last_columns_used") or result.get("columns")
+        if sel:
+            l2.selected_columns = list(sel)[:50]
+        if result.get("filters"):
+            l2.filters = list(result.get("filters") or [])[:30]
+        if result.get("dataset_name"):
+            l2.dataset_name = result.get("dataset_name")
+        if result.get("forecast") or result.get("forecast_chart"):
+            l2.has_forecast = True
+        if result.get("forecast_model"):
+            l2.forecast_model = result.get("forecast_model")
+        if result.get("forecast_horizon"):
+            try:
+                l2.forecast_horizon = int(result.get("forecast_horizon"))
+            except Exception:
+                pass
+        chart_type = result.get("last_chart_type")
+        if chart_type:
+            types = list(l2.chart_types or [])
+            if chart_type not in types:
+                types.append(str(chart_type))
+            l2.chart_types = types[-20:]
+        if result.get("artifact_ids"):
+            ids = list(l2.artifact_ids or [])
+            for a in result.get("artifact_ids") or []:
+                if a not in ids:
+                    ids.append(a)
+            l2.artifact_ids = ids[-50:]
         l2.updated_at = _utc_now_iso()
 
         save_session_memory_blob(session_id, sanitize_for_json(l2.to_dict()) or {})

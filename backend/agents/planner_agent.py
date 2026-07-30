@@ -258,14 +258,24 @@ def _analysis_suffix(include_viz: bool = True) -> list[str]:
 
 def _needs_rediscovery(state, dataset_requested: bool) -> bool:
     """True when active data should NOT be reused for this question."""
-    if state.get("data") is None:
+    if state.get("data") is None and not (
+        state.get("file_path") or state.get("local_path") or state.get("dataset_url")
+    ):
         return False
     if state.get("topic_mismatch"):
         return True
-    if state.get("force_reload_dataset"):
+    if state.get("force_reload_dataset") and state.get("topic_mismatch"):
         return True
+    # Memory v2: planner must never re-request upload when a valid frame is bound.
+    if state.get("planner_skip_upload") or state.get("reuse_active_dataset"):
+        return False
+    if state.get("data") is not None and not state.get("topic_mismatch"):
+        # Follow-up analysis on the same session dataset
+        return False
     # New named topic / open-world ask while another dataset is loaded.
     if dataset_requested and not state.get("reuse_active_dataset"):
+        if state.get("data") is not None and not state.get("topic_mismatch"):
+            return False
         return True
     return False
 
@@ -282,7 +292,19 @@ def _forecast_suffix() -> list[str]:
 
 def _build_rule_based_plan(state, normalized, intents, dataset_requested):
     has_data = state.get("data") is not None
-    reuse = bool(state.get("reuse_active_dataset")) and has_data and not state.get("topic_mismatch")
+    has_binding = has_data or bool(
+        state.get("file_path") or state.get("local_path") or state.get("dataset_url")
+    )
+    # Memory v2: prefer reuse whenever session data is bound and topic matches
+    reuse = (
+        has_binding
+        and not state.get("topic_mismatch")
+        and (
+            bool(state.get("reuse_active_dataset"))
+            or bool(state.get("planner_skip_upload"))
+            or has_data
+        )
+    )
     rediscover = _needs_rediscovery(state, dataset_requested)
 
     # --- Comparison (country or multi-metric) ---
@@ -422,7 +444,14 @@ def planner_agent(state):
         state.get("data") is not None
         or state.get("dataset_url")
         or state.get("file_path")
+        or state.get("local_path")
+        or state.get("planner_skip_upload")
     )
+    # If we already have a frame, never treat keyword overlap as "must rediscover"
+    if state.get("data") is not None and not state.get("topic_mismatch"):
+        state["reuse_active_dataset"] = True
+        state["planner_skip_upload"] = True
+        state["needs_user_data"] = False
 
     # Product default: deterministic rule-based plan first (reliable + fast).
     plan = _build_rule_based_plan(state, normalized, intents, dataset_requested)
@@ -483,7 +512,7 @@ def planner_agent(state):
             }
         ]
 
-    # Active dataset reuse (follow-ups like "forecast it"): skip rediscovery.
+    # Active dataset reuse (follow-ups like "show histogram" / "forecast it"): skip rediscovery.
     rediscover = _needs_rediscovery(state, dataset_requested) or state.get("topic_mismatch")
     discovery_nodes = {
         "dataset_topic_agent",
@@ -494,12 +523,11 @@ def planner_agent(state):
         "fetch_data",
         "load_data",
     }
-    if (
-        state.get("data") is not None
-        and state.get("reuse_active_dataset")
-        and not rediscover
-    ):
+    if state.get("data") is not None and not rediscover:
+        # Memory v2: with a valid frame, never force discovery/upload
         plan = [step for step in plan if step not in discovery_nodes]
+        state["reuse_active_dataset"] = True
+        state["needs_user_data"] = False
     elif state.get("data") is not None and not dataset_requested and not rediscover:
         # Same session, no new topic named — keep working on the active frame.
         plan = [

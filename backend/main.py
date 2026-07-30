@@ -252,52 +252,47 @@ def _normalize_dataset_reference(file_path: str | None) -> str | None:
     return str(Path(file_path).expanduser().resolve(strict=False))
 
 
-def _question_is_new_topic(question: str | None, active_topic: str | None) -> bool:
+def _question_is_new_topic(
+    question: str | None,
+    active_topic: str | None,
+    *,
+    has_active_dataset: bool = False,
+) -> bool:
     """True when the user named a different subject than the session dataset."""
-    import re
+    from backend.memory.continuity import is_new_dataset_topic
 
-    stop = {
-        "the", "a", "an", "and", "or", "of", "for", "to", "in", "on", "with", "by",
-        "from", "analyze", "analyse", "analysis", "study", "explore", "forecast",
-        "predict", "next", "previous", "past", "last", "years", "year", "rate",
-        "rates", "price", "prices", "data", "dataset", "show", "plot", "trend",
-        "trends", "please", "help",
-    }
-    q_tokens = {
-        t for t in re.findall(r"[a-z0-9]+", (question or "").lower())
-        if len(t) > 2 and t not in stop
-    }
-    t_tokens = {
-        t for t in re.findall(r"[a-z0-9]+", (active_topic or "").lower())
-        if len(t) > 2 and t not in stop
-    }
-    if not q_tokens:
-        return False
-    if not t_tokens:
-        return bool(q_tokens)
-    return len(q_tokens & t_tokens) == 0
+    return is_new_dataset_topic(
+        question,
+        active_topic,
+        has_active_dataset=has_active_dataset,
+    )
 
 
 def _build_state(session, question=None, file_path=None):
     # Session memory: reload the active dataset so follow-ups like
-    # "forecast it" work without re-uploading or re-searching.
+    # "show histogram" / "forecast it" work without re-uploading.
+    from backend.memory.continuity import should_reuse_session_dataset
+
     dataset_url = getattr(session, "dataset_url", None) if session is not None else None
     dataset_path = getattr(session, "dataset_path", None) if session is not None else None
     dataset_topic = getattr(session, "dataset_topic", None) if session is not None else None
+    session_topic_for_provider = dataset_topic
+
+    has_binding = bool(dataset_path or dataset_url)
+    reuse, topic_mismatch = should_reuse_session_dataset(
+        question=question,
+        dataset_topic=dataset_topic,
+        dataset_path=dataset_path,
+        dataset_url=dataset_url,
+        has_frame=False,
+        file_path_override=file_path,
+    )
 
     # Hard stop: "analyze gold..." must NOT keep India GDP from session memory.
-    # Detect before loading so we never waste time reloading the wrong frame.
-    topic_mismatch = False
-    if (
-        question
-        and not file_path
-        and session is not None
-        and (dataset_topic or dataset_url or dataset_path)
-        and _question_is_new_topic(question, dataset_topic)
-    ):
-        topic_mismatch = True
+    if topic_mismatch and not file_path:
         dataset = None
         dataset_url = None
+        dataset_path = None
         logger.info(
             "Session dataset cleared for new topic",
             extra={
@@ -307,9 +302,14 @@ def _build_state(session, question=None, file_path=None):
             },
         )
         dataset_topic = None
+        reuse = False
     else:
         dataset = None if file_path else _load_session_dataset(session)
+        if dataset is not None:
+            reuse = True
+            topic_mismatch = False
 
+    bound_path = None if file_path else dataset_path
     return {
         "data": dataset,
         "last_dataset": dataset,
@@ -340,11 +340,14 @@ def _build_state(session, question=None, file_path=None):
         "detected_patterns": [],
         "dataset_topic": dataset_topic,
         "dataset_url": dataset_url,
-        "file_path": dataset_path if not file_path else None,
-        "has_active_dataset": dataset is not None,
-        "reuse_active_dataset": False,
+        "dataset_path": bound_path,
+        "file_path": file_path or bound_path,
+        "local_path": bound_path if bound_path and not str(bound_path).startswith(("http://", "https://")) else None,
+        "has_active_dataset": dataset is not None or bool(bound_path or dataset_url),
+        "reuse_active_dataset": bool(reuse and not topic_mismatch),
         "topic_mismatch": topic_mismatch,
         "force_reload_dataset": topic_mismatch,
+        "planner_skip_upload": bool(reuse and not topic_mismatch),
         "chart_columns_used": [],
         "rows": int(dataset.shape[0]) if dataset is not None else 0,
         "columns": dataset.columns.tolist() if dataset is not None else [],
@@ -353,22 +356,17 @@ def _build_state(session, question=None, file_path=None):
         "data_acquisition_options": [],
         "dataset_discovery": {},
         "search_queries": [],
-        "source": None,
+        "source": "session" if dataset is not None and not file_path else None,
         "dataset_source": None,
         "focus_country": None,
-        "local_path": None,
-        "dataset_id": None,
+        "dataset_id": getattr(session, "dataset_id", None) if session is not None else None,
         "registry_id": None,
         "dataset_metadata": {},
         "retrieval_result": {},
         "acquisition_result": {},
         "dataset_intelligence": {},
         "learning_result": {},
-        # Previous session topic for SessionProvider (even when mismatch clears active topic)
-        "session_dataset_topic": getattr(session, "dataset_topic", None)
-        if session is not None
-        else None,
-        # Phase 5 placeholders (filled by MemoryHierarchyService.inject_into_state)
+        "session_dataset_topic": session_topic_for_provider,
         "memory": {},
         "conversation_memory": {},
         "session_memory": {},
@@ -376,8 +374,9 @@ def _build_state(session, question=None, file_path=None):
         "knowledge_memory": {},
         "memory_hierarchy_loaded": False,
         "recent_messages": [],
+        "selected_columns": (getattr(session, "last_columns", None) or []) if session is not None else [],
+        "filters": [],
     }
-
 
 def _stable_response(result, question=None, timings=None):
     dataset_profile = result.get("dataset_profile") or {}
