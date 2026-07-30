@@ -40,6 +40,9 @@ STAGE_KEYS = (
     "insights",
     "session",
     "cache",
+    "serialization",
+    "response",
+    "provider",
     "total",
 )
 
@@ -90,6 +93,16 @@ class PipelineTimer:
     counts: dict[str, int] = field(default_factory=dict)
     started_at: float = field(default_factory=time.perf_counter)
     meta: dict[str, Any] = field(default_factory=dict)
+    # Observability labels / outcome
+    success: bool = True
+    cache_hit: bool = False
+    error: str | None = None
+    forecast_model: str | None = None
+    chart_type: str | None = None
+    provider: str | None = None
+    provider_latency_ms: dict[str, float] = field(default_factory=dict)
+    route: str | None = None
+    status_code: int | None = None
 
     def add_ms(self, stage: str, ms: float) -> None:
         if not stage or ms < 0:
@@ -100,6 +113,24 @@ class PipelineTimer:
 
     def add_seconds(self, stage: str, seconds: float) -> None:
         self.add_ms(stage, seconds * 1000.0)
+
+    def set_label(self, **kwargs: Any) -> None:
+        for k, v in kwargs.items():
+            if hasattr(self, k) and v is not None:
+                setattr(self, k, v)
+            else:
+                self.meta[k] = v
+
+    def record_provider_latency(self, provider: str, ms: float) -> None:
+        if not provider:
+            return
+        name = str(provider)
+        self.provider_latency_ms[name] = float(
+            self.provider_latency_ms.get(name, 0.0)
+        ) + float(ms)
+        self.add_ms("provider", ms)
+        if not self.provider:
+            self.provider = name
 
     def mark_total(self) -> None:
         elapsed = (time.perf_counter() - self.started_at) * 1000.0
@@ -157,9 +188,14 @@ def pipeline_timer(**meta: Any) -> Generator[PipelineTimer, None, None]:
     timer, token = start_timer(**meta)
     try:
         yield timer
+    except Exception as exc:
+        timer.success = False
+        timer.error = str(exc)[:500]
+        raise
     finally:
         timer.mark_total()
         _publish_aggregate(timer)
+        _publish_metrics(timer)
         reset_timer(token)
 
 
@@ -281,10 +317,97 @@ def merge_timings(*parts: dict[str, Any] | None) -> dict[str, int]:
 def _publish_aggregate(timer: PipelineTimer) -> None:
     with _AGG_LOCK:
         for stage, ms in timer.stages.items():
-            slot = _AGG.setdefault(stage, {"count": 0.0, "total_ms": 0.0, "max_ms": 0.0})
+            slot = _AGG.setdefault(
+                stage,
+                {
+                    "count": 0.0,
+                    "total_ms": 0.0,
+                    "max_ms": 0.0,
+                    "min_ms": float("inf"),
+                    "samples": [],
+                },
+            )
             slot["count"] += 1
             slot["total_ms"] += ms
             slot["max_ms"] = max(slot["max_ms"], ms)
+            slot["min_ms"] = min(slot["min_ms"], ms)
+            # Keep rolling window of samples for P50/P95 (cap 200)
+            samples = slot.setdefault("samples", [])
+            samples.append(float(ms))
+            if len(samples) > 200:
+                del samples[: len(samples) - 200]
+
+
+def _percentile(sorted_vals: list[float], p: float) -> float:
+    if not sorted_vals:
+        return 0.0
+    if len(sorted_vals) == 1:
+        return float(sorted_vals[0])
+    k = (len(sorted_vals) - 1) * (p / 100.0)
+    f = int(k)
+    c = min(f + 1, len(sorted_vals) - 1)
+    if f == c:
+        return float(sorted_vals[f])
+    return float(sorted_vals[f] * (c - k) + sorted_vals[c] * (k - f))
+
+
+def _publish_metrics(timer: PipelineTimer) -> None:
+    """Push request sample into in-process collector + SQLite store."""
+    try:
+        from backend.production.metrics import get_metrics_collector
+        from backend.production.metrics_store import record_metric_sample
+
+        collector = get_metrics_collector()
+        resources = collector.sample_resources()
+        total_s = float(timer.stages.get("total") or 0.0) / 1000.0
+        collector.record_latency(
+            "api",
+            total_s,
+            failed=not timer.success,
+        )
+        for stage, ms in timer.stages.items():
+            if stage == "total":
+                continue
+            collector.record_latency(stage, float(ms) / 1000.0, failed=False)
+        if timer.cache_hit:
+            collector.incr("cache_hits")
+        else:
+            collector.incr("cache_misses")
+        if not timer.success:
+            collector.incr("failures")
+        if timer.forecast_model:
+            collector.incr(f"forecast_model:{timer.forecast_model}")
+        if timer.chart_type:
+            collector.incr(f"chart_type:{timer.chart_type}")
+
+        stages_payload: dict[str, Any] = {k: round(v, 3) for k, v in timer.stages.items()}
+        if timer.provider_latency_ms:
+            stages_payload["provider_latency_ms"] = {
+                k: round(v, 3) for k, v in timer.provider_latency_ms.items()
+            }
+
+        record_metric_sample(
+            route=timer.route or timer.meta.get("route") or "/v1/ask",
+            method="GET",
+            status_code=timer.status_code or (200 if timer.success else 500),
+            session_id=timer.meta.get("session_id"),
+            success=timer.success,
+            cache_hit=timer.cache_hit,
+            total_ms=float(timer.stages.get("total") or 0.0),
+            memory_mb=resources.get("memory_mb"),
+            cpu_percent=resources.get("cpu_percent"),
+            forecast_model=timer.forecast_model,
+            chart_type=timer.chart_type,
+            provider=timer.provider,
+            error=timer.error,
+            stages=stages_payload,
+            labels={
+                "question": (timer.meta.get("question") or "")[:80],
+                **{k: v for k, v in (timer.meta or {}).items() if k not in {"question"}},
+            },
+        )
+    except Exception as exc:
+        logger.debug("metrics publish skipped", extra={"error": str(exc)})
 
 
 def aggregate_timing_stats() -> dict[str, Any]:
@@ -293,11 +416,17 @@ def aggregate_timing_stats() -> dict[str, Any]:
         for stage, slot in _AGG.items():
             count = int(slot["count"])
             total = float(slot["total_ms"])
+            samples = sorted(float(x) for x in (slot.get("samples") or []))
             out[stage] = {
                 "count": count,
                 "avg_ms": round(total / count, 2) if count else 0.0,
                 "max_ms": round(float(slot["max_ms"]), 2),
+                "min_ms": round(
+                    float(slot["min_ms"]) if slot["min_ms"] != float("inf") else 0.0, 2
+                ),
                 "total_ms": round(total, 2),
+                "p50_ms": round(_percentile(samples, 50), 2),
+                "p95_ms": round(_percentile(samples, 95), 2),
             }
         return out
 

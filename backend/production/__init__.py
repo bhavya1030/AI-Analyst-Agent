@@ -36,6 +36,10 @@ from backend.production.metrics import (
     metrics,
     reset_metrics_collector,
 )
+from backend.production.performance import (
+    build_performance_dashboard,
+    to_prometheus,
+)
 from backend.production.rate_limiter import (
     RateLimitExceeded,
     RateLimiter,
@@ -69,6 +73,8 @@ __all__ = [
     "MetricsCollector",
     "get_metrics_collector",
     "reset_metrics_collector",
+    "build_performance_dashboard",
+    "to_prometheus",
     "Tracer",
     "get_tracer",
     "reset_tracer",
