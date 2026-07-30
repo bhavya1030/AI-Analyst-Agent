@@ -23,12 +23,30 @@ def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+# Process-local path fingerprint cache: (resolved_path, size, mtime_ns) → sha256
+_FILE_FP_CACHE: dict[str, tuple[int, int, str]] = {}
+_FILE_FP_LOCK = __import__("threading").RLock()
+
+
 def fingerprint_file(path: str | Path) -> Optional[str]:
-    """SHA256 of local file contents. Returns None if unreadable/missing."""
+    """SHA256 of local file contents. Returns None if unreadable/missing.
+
+    Hot-path optimization: if size+mtime are unchanged, reuse the previous digest
+    so warm /v1/ask requests do not re-read multi-MB datasets.
+    """
     try:
-        p = Path(path).expanduser()
+        p = Path(path).expanduser().resolve(strict=False)
         if not p.is_file():
             return None
+        stat = p.stat()
+        size = int(stat.st_size)
+        mtime_ns = int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1e9)))
+        cache_key = str(p)
+        with _FILE_FP_LOCK:
+            cached = _FILE_FP_CACHE.get(cache_key)
+            if cached and cached[0] == size and cached[1] == mtime_ns:
+                return cached[2]
+
         h = hashlib.sha256()
         with p.open("rb") as fh:
             while True:
@@ -36,17 +54,27 @@ def fingerprint_file(path: str | Path) -> Optional[str]:
                 if not chunk:
                     break
                 h.update(chunk)
-        # Include size + mtime for extra safety against rare hash collisions
-        # without changing primary content hash semantics for equal content.
-        stat = p.stat()
-        h.update(str(stat.st_size).encode("utf-8"))
-        return h.hexdigest()
+        # Include size for extra safety against rare hash collisions
+        h.update(str(size).encode("utf-8"))
+        digest = h.hexdigest()
+        with _FILE_FP_LOCK:
+            _FILE_FP_CACHE[cache_key] = (size, mtime_ns, digest)
+            # Bound memory
+            if len(_FILE_FP_CACHE) > 256:
+                # drop arbitrary oldest entry
+                _FILE_FP_CACHE.pop(next(iter(_FILE_FP_CACHE)))
+        return digest
     except Exception as exc:
         logger.debug(
             "File fingerprint failed",
             extra={"path": str(path), "error": str(exc)},
         )
         return None
+
+
+def clear_file_fingerprint_cache() -> None:
+    with _FILE_FP_LOCK:
+        _FILE_FP_CACHE.clear()
 
 
 def fingerprint_dataframe(df: pd.DataFrame) -> str:

@@ -50,7 +50,8 @@ _schema_ready = False
 # Process-local L1 for hot paths (fingerprint:kind:params_hash → payload)
 _L1: dict[str, Any] = {}
 _L1_LOCK = threading.RLock()
-_L1_MAX = 128
+# Larger L1 so ask-level payloads stay in RAM for warm requests
+_L1_MAX = 256
 
 
 def _utcnow() -> datetime:
@@ -134,7 +135,9 @@ class AnalysisCacheService:
         key = build_cache_key(kind, fingerprint, params)
         cached = _l1_get(key)
         if cached is not None:
-            logger.info(
+            # L1 hit: return immediately — do not open SQLite or rewrite hit_count
+            # (keeps warm /v1/ask under 2s).
+            logger.debug(
                 "Analysis cache L1 hit",
                 extra={"kind": kind, "fingerprint": fingerprint[:16], "cache_key": key},
             )

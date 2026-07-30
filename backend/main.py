@@ -746,29 +746,26 @@ def ask(
 
         # --- Ask-level cache lookup (skip Planner/EDA/Viz/Forecast on hit) ---
         with time_stage("cache"):
-            cache_fp = resolve_dataset_fingerprint(
-                file_path=normalized_file_path
-                if normalized_file_path and not _is_remote_reference(normalized_file_path)
-                else None,
-                dataset_path=getattr(session, "dataset_path", None) if session else None,
-                dataset_url=getattr(session, "dataset_url", None) if session else None,
-            )
-            # High-confidence registry local path for topic (cheap, no graph)
-            if not cache_fp and not normalized_file_path:
+            # Prefer session-stored fingerprint (no file re-hash)
+            cache_fp = None
+            if session is not None:
                 try:
-                    from backend.registry import match_topic
+                    from backend.memory.hierarchy_store import load_session_memory_blob
 
-                    topic_guess = " ".join((question or "").split()[:10])
-                    hits = match_topic(topic_guess or question, question=question, limit=1)
-                    if hits and hits[0].metadata and hits[0].metadata.local_path:
-                        cache_fp = resolve_dataset_fingerprint(
-                            dataset_path=hits[0].metadata.local_path
-                        )
-                except Exception as cache_topic_exc:
-                    logger.debug(
-                        "Ask cache topic fingerprint probe skipped",
-                        extra={"error": str(cache_topic_exc)},
-                    )
+                    blob = load_session_memory_blob(session_id) or {}
+                    cache_fp = blob.get("dataset_fingerprint") or None
+                except Exception:
+                    cache_fp = None
+            if not cache_fp:
+                cache_fp = resolve_dataset_fingerprint(
+                    file_path=normalized_file_path
+                    if normalized_file_path and not _is_remote_reference(normalized_file_path)
+                    else None,
+                    dataset_path=getattr(session, "dataset_path", None) if session else None,
+                    dataset_url=getattr(session, "dataset_url", None) if session else None,
+                )
+            # Skip expensive registry match_topic on warm path — only if still no fp
+            # and no session binding (rare cold open-world case without file)
 
             cached_body, cache_meta = (None, {})
             if cache_fp:
@@ -780,10 +777,11 @@ def ask(
                 )
 
         if cached_body:
-            # Persist session turn from cache (no recompute)
+            # Warm path: Auth ✓ · Session update ✓ · Serialize ✓
+            # Do NOT run planner / retrieval / EDA / viz / forecast / insights.
             try:
                 with time_stage("session"):
-                    turn = session_svc.record_assistant_turn(
+                    turn = session_svc.record_cached_assistant_turn(
                         session_id,
                         question=question,
                         result=cached_body,
@@ -793,20 +791,39 @@ def ask(
             except Exception:
                 turn = None
             elapsed_ms = (_time.perf_counter() - ask_t0) * 1000
+            lookup_ms = float(cache_meta.get("lookup_ms") or cache_meta.get("cache_latency_ms") or 0)
+            cold_ms = cache_meta.get("cold_ms")
+            saved_ms = cache_meta.get("saved_time_ms")
+            if saved_ms is None and cold_ms is not None:
+                try:
+                    saved_ms = max(0.0, float(cold_ms) - elapsed_ms)
+                except Exception:
+                    saved_ms = None
+
+            # Cached body already sanitized at store time — avoid deep re-walk
             response = dict(cached_body)
+            response.pop("_cold_ms", None)
+            response.pop("_sanitized", None)
             response["question"] = question
             response["session_id"] = session_id
             response["user_id"] = user_id
             response["cache_hit"] = True
             response["cache_skipped_pipeline"] = True
+            response["cache_latency_ms"] = round(lookup_ms, 2)
+            response["saved_time_ms"] = (
+                round(float(saved_ms), 2) if saved_ms is not None else None
+            )
             response["response_ms"] = round(elapsed_ms, 2)
             response["cache"] = {
                 **cache_meta,
+                "cache_hit": True,
+                "cache_latency_ms": round(lookup_ms, 2),
+                "saved_time_ms": response["saved_time_ms"],
                 "stats": ask_cache.stats(),
             }
             timings = timer.as_dict()
             timings["total"] = int(round(elapsed_ms))
-            # Zero out pipeline stages not executed on cache hit
+            timings["cache"] = int(round(lookup_ms))
             for k in (
                 "planner",
                 "retrieval",
@@ -818,16 +835,23 @@ def ask(
                 "forecast",
                 "insights",
             ):
-                timings.setdefault(k, 0)
+                timings[k] = 0
             response["timings"] = timings
             if turn:
                 response["message_id"] = turn.get("message_id")
                 response["artifact_ids"] = turn.get("artifact_ids") or []
             logger.info(
                 "Ask completed from cache",
-                extra={"session_id": session_id, "timings": timings},
+                extra={
+                    "session_id": session_id,
+                    "timings": timings,
+                    "cache_latency_ms": lookup_ms,
+                    "saved_time_ms": response["saved_time_ms"],
+                    "response_ms": elapsed_ms,
+                },
             )
-            return sanitize_for_json(response)
+            # Payload already JSON-safe from store; light wrap only
+            return response
 
         state = _build_state(
             session=session,
