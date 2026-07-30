@@ -375,6 +375,9 @@ class MemoryHierarchyService:
         """
         Merge hierarchy into graph state without overwriting active request fields
         that are already intentionally set (e.g. fresh file_path).
+
+        Critical: detect topic mismatch *before* rebinding session dataset paths
+        so "Analyze gold" after "India GDP" never silently reuses the GDP file.
         """
         state = state if isinstance(state, dict) else {}
         l1, l2, l3, l4 = (
@@ -383,6 +386,43 @@ class MemoryHierarchyService:
             bundle.l3_dataset,
             bundle.l4_knowledge,
         )
+
+        # --- Pre-detect topic switch before path/frame injection ---
+        if not state.get("topic_mismatch") and not state.get("file_path"):
+            try:
+                from backend.memory.continuity import is_new_dataset_topic
+
+                question = state.get("question") or state.get("raw_question")
+                active_topic = l2.dataset_topic or l2.dataset_name
+                has_binding = bool(
+                    l2.dataset_path
+                    or l2.dataset_url
+                    or l2.dataset_fingerprint
+                    or l3.dataset_path
+                    or l3.dataset_url
+                )
+                if has_binding and is_new_dataset_topic(
+                    question,
+                    active_topic,
+                    has_active_dataset=has_binding,
+                ):
+                    state["topic_mismatch"] = True
+                    state["force_reload_dataset"] = True
+                    state["reuse_active_dataset"] = False
+                    # Do not carry prior topic labels into discovery
+                    state.pop("dataset_topic", None)
+                    logger.info(
+                        "Topic mismatch pre-detect — skip session dataset rebind",
+                        extra={
+                            "question": (question or "")[:80],
+                            "active_topic": active_topic,
+                        },
+                    )
+            except Exception as exc:
+                logger.debug(
+                    "Topic mismatch pre-detect skipped",
+                    extra={"error": str(exc)},
+                )
 
         # Full structured bundle (agents may read selectively)
         state["memory"] = sanitize_for_json(bundle.to_dict())
