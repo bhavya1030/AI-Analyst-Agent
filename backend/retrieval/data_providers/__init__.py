@@ -1,10 +1,12 @@
-"""Production multi-provider open-data retrieval architecture."""
+"""Production multi-provider open-data retrieval architecture (v2)."""
 
 from backend.retrieval.data_providers.base import (
     DataProvider,
     DatasetCandidate,
     ProviderSearchResult,
 )
+from backend.retrieval.data_providers.eurostat import EurostatProvider
+from backend.retrieval.data_providers.fred import FredProvider
 from backend.retrieval.data_providers.orchestrator import (
     OrchestratorResult,
     ProviderOrchestrator,
@@ -26,6 +28,8 @@ __all__ = [
     "ProviderSearchResult",
     "ProviderOrchestrator",
     "OrchestratorResult",
+    "FredProvider",
+    "EurostatProvider",
     "default_providers",
     "get_provider_orchestrator",
     "set_provider_orchestrator",
