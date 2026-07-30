@@ -8,6 +8,8 @@ from backend.retrieval.data_providers.catalog import catalog_entries_for
 _WB_KEYS = {
     "gdp", "population", "inflation", "unemployment", "tourism",
     "internet_usage", "internet", "macro", "world bank",
+    "happiness", "life expectancy", "air quality", "pm25", "pollution",
+    "co2", "emission",
 }
 
 
@@ -27,7 +29,8 @@ class WorldBankProvider(DataProvider):
         out: list[DatasetCandidate] = []
         for e in entries:
             if e.get("provider") not in {"world_bank", "World Bank"} and e.get("catalog_key") not in {
-                "gdp", "population", "inflation", "unemployment", "tourism", "internet_usage",
+                "gdp", "population", "inflation", "unemployment", "tourism",
+                "internet_usage", "happiness", "air_quality", "co2_emissions",
             }:
                 # still allow if provider is world_bank
                 if e.get("provider") != "world_bank":
@@ -45,6 +48,9 @@ class WorldBankProvider(DataProvider):
                     description=e.get("description") or "",
                     tags=list(e.get("tags") or []) + ["world_bank"],
                     rank=100,
+                    confidence=0.9,
+                    metric=e.get("catalog_key"),
+                    time_period="annual",
                     extra={"source_type": "API", "catalog_key": e.get("catalog_key")},
                 )
             )

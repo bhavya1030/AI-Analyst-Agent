@@ -57,6 +57,7 @@ DOMAIN_LEXICON: dict[str, set[str]] = {
 # Domains that must not cross-match without strong evidence.
 DOMAIN_CONFLICTS: dict[str, set[str]] = {
     "sports": {"macroeconomics", "demographics", "finance", "climate", "energy"},
+    "olympics": {"macroeconomics", "finance", "climate", "demographics"},
     "macroeconomics": {"sports", "transport", "olympics"},
     "demographics": {"sports", "finance", "cryptocurrency"},
     "finance": {"sports", "demographics", "tourism"},
@@ -369,6 +370,19 @@ def score_dataset(
     macro_ds = bool({"gdp", "inflation", "cpi"} & m_keywords) or m_domain == "macroeconomics"
     if sports_q and macro_ds and not ({"olympic", "olympics", "medal"} & m_keywords):
         rejections.append("Sports/olympics query cannot match GDP/macro registry dataset.")
+
+    # Inverse: GDP query must never match Olympics / sports-only datasets
+    macro_q = bool({"gdp", "inflation", "cpi", "unemployment"} & q_tokens) or (
+        query.domain == "macroeconomics"
+    )
+    sports_ds = (
+        bool({"olympic", "olympics", "medal", "medals", "athlete"} & m_keywords)
+        or m_domain in {"sports", "olympics"}
+        or "olympic" in m_topic
+        or "olympic" in m_title
+    )
+    if macro_q and sports_ds and not ({"gdp", "inflation", "cpi"} & m_keywords):
+        rejections.append("GDP/macro query cannot match Olympics/sports registry dataset.")
 
     unicorn_pop = "unicorn" in query.raw.lower() and (
         "population" in m_topic or m_domain == "demographics"

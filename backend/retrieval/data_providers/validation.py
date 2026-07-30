@@ -27,13 +27,23 @@ _BLOCKED_PATH_SNIPPETS = (
     "/searchresults",
     "/search?",
     "/search/",
+    "/search#",
     "/login",
     "/signin",
+    "/signup",
+    "/register",
     "/accounts/login",
     "/auth/",
+    "/oauth",
     "wiki/",
     "/w/index.php",
     "/catalog/dataset/",  # data.gov landing pages without resource id
+    "/datasets?",  # listing pages
+    "/explore?",
+    "/query?",
+    ".pdf",
+    "/pdf/",
+    "text/html",
 )
 
 _BLOCKED_HOST_PATHS = {
@@ -118,6 +128,16 @@ def is_blocked_url(url: str | None) -> tuple[bool, str]:
     # OECD/HTML catalog search pages
     if "data.oecd.org" in host and "search" in path_q:
         return True, "oecd_search_page"
+    if "stats.oecd.org" in host and "/sdmx-json/" not in path_q:
+        if not path_q.rstrip("/").endswith((".csv", ".json")):
+            return True, "oecd_non_data_endpoint"
+
+    # Generic HTML landing hosts without file extensions
+    if host.endswith("kaggle.com") and "/download" not in path_q:
+        return True, "kaggle_landing_page"
+    if "facebook.com" in host or "twitter.com" in host or "x.com" in host:
+        return True, "social_media_page"
+
     if "stats.oecd.org" in host and "/sdmx-json/" not in path_q and not path_q.rstrip("/").endswith((".csv", ".json")):
         # Allow only explicit SDMX-JSON data endpoints
         if "/sdmx-json/data/" not in path_q:
