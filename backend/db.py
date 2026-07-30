@@ -1,16 +1,38 @@
-from sqlalchemy import JSON, Column, String, Text, create_engine, inspect, text
+from sqlalchemy import JSON, Column, String, Text, create_engine, event, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from backend.config import settings
 
+# SQLite Reliability v2: allow multi-thread + durable concurrent reads after write
+_connect_args: dict = {"check_same_thread": False}
+if str(settings.DATABASE_URL).startswith("sqlite"):
+    # timeout is the Python sqlite3 busy wait (seconds)
+    _connect_args["timeout"] = 30.0
+
 engine = create_engine(
     settings.DATABASE_URL,
-    connect_args={"check_same_thread": False},
+    connect_args=_connect_args,
+    pool_pre_ping=True,
 )
 
-SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, autoflush=True)
 
 Base = declarative_base()
+
+
+@event.listens_for(engine, "connect")
+def _sqlite_on_connect(dbapi_connection, connection_record) -> None:  # noqa: ARG001
+    """Apply per-connection durability pragmas (WAL, busy_timeout, FKs)."""
+    if not str(settings.DATABASE_URL).startswith("sqlite"):
+        return
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA foreign_keys=ON")
+    finally:
+        cursor.close()
 
 
 class SessionMemory(Base):
