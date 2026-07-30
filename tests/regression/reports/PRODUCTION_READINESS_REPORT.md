@@ -239,6 +239,19 @@
 - Internet full pipeline 23% below 90%
 - Failure concentration: internet=20, charts=1, error=1, session=1
 
+## How to re-run
+
+```bash
+# Restart backend first
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+
+# Full suite (continues on failure)
+python tests/regression/run_production_regression_v2.py
+
+# Or complete after partial failure
+python tests/regression/complete_production_regression_v2.py
+```
+
 ## Prioritized Roadmap to 10/10
 
 1. **Forecast SLO** — Ensure all yearly/monthly series return within 10s with model tag; measure success ≥95%.
