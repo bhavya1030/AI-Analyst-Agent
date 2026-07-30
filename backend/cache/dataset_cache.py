@@ -105,10 +105,18 @@ def get_forecast(
     fingerprint: str | None = None,
     horizon: int | None = None,
     time_col: str | None = None,
+    model: str | None = None,
 ) -> dict[str, Any] | None:
-    ram_key = f"{reference}:{target}" if reference else None
-    if ram_key and ram_key in _forecast_cache:
-        return _forecast_cache.get(ram_key)
+    # Key includes horizon + model so different forecasts do not collide in RAM.
+    ram_key = None
+    if reference:
+        ram_key = f"{reference}:{target}:h={horizon}:m={model or 'any'}"
+        if ram_key in _forecast_cache:
+            return _forecast_cache.get(ram_key)
+        # Backward-compatible lookup
+        legacy = f"{reference}:{target}"
+        if legacy in _forecast_cache and model is None:
+            return _forecast_cache.get(legacy)
 
     fp = fingerprint or (reference and _ref_fingerprints.get(reference))
     if fp:
@@ -117,6 +125,9 @@ def get_forecast(
             params["horizon"] = horizon
         if time_col:
             params["time_col"] = time_col
+        if model:
+            params["model"] = model
+            params["engine"] = "forecast_v2"
         try:
             payload = get_analysis_cache().get(KIND_FORECAST, fp, params)
             if isinstance(payload, dict):
@@ -137,14 +148,19 @@ def set_forecast(
     fingerprint: str | None = None,
     horizon: int | None = None,
     time_col: str | None = None,
+    model: str | None = None,
 ) -> None:
     payload = {
         "forecast": forecast,
         "forecast_chart": chart,
+        "model": model,
     }
-    ram_key = f"{reference}:{target}" if reference else None
-    if ram_key:
+    ram_key = None
+    if reference:
+        ram_key = f"{reference}:{target}:h={horizon}:m={model or 'any'}"
         _forecast_cache[ram_key] = payload
+        # Keep legacy key for older callers
+        _forecast_cache[f"{reference}:{target}"] = payload
         if len(_forecast_cache) > CACHE_MAX_ENTRIES:
             keys = list(_forecast_cache.keys())[: len(_forecast_cache) - CACHE_MAX_ENTRIES]
             for key in keys:
@@ -158,6 +174,9 @@ def set_forecast(
             params["horizon"] = horizon
         if time_col:
             params["time_col"] = time_col
+        if model:
+            params["model"] = model
+            params["engine"] = "forecast_v2"
         try:
             get_analysis_cache().put(KIND_FORECAST, fp, payload, params)
         except Exception as exc:
