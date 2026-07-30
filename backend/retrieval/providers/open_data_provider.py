@@ -59,7 +59,15 @@ class OpenDataProvider(RetrievalProvider):
             "country": result.country,
             "metric": result.metric,
             "domain": result.domain,
+            "metrics": result.metrics or {},
         }
+        # Retrieval v3 surface metrics at top-level metadata for observability
+        orch_metrics = result.metrics or {}
+        meta["provider_latency_ms"] = orch_metrics.get("provider_latency_ms", {})
+        meta["provider_timeout"] = orch_metrics.get("provider_timeout", {})
+        meta["provider_rank"] = orch_metrics.get("provider_rank", {})
+        meta["provider_success"] = orch_metrics.get("provider_success", {})
+        meta["retrieval_budget_used"] = orch_metrics.get("retrieval_budget_used", 0.0)
         # Provenance contract: provider, version, download date, license, hash
         prov = result.provenance or {}
         meta["download_url"] = cand.download_url
