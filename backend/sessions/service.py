@@ -22,6 +22,13 @@ from sqlalchemy.orm import selectinload
 from backend.core.logger import get_logger
 from backend.db import SessionLocal, SessionMemory, engine
 from backend.sessions.models import AnalysisSession, SessionArtifact, SessionMessage
+from backend.sessions.transactions import (
+    commit_and_barrier,
+    configure_sqlite_durability,
+    finalize_session_write,
+    session_lock,
+    verify_session_row,
+)
 from backend.utils.json_safe import sanitize_for_json
 
 logger = get_logger(__name__)
@@ -65,6 +72,7 @@ def ensure_session_tables() -> None:
     """Create analysis_sessions / session_messages / session_artifacts if missing."""
     global _schema_ready
     with _schema_lock:
+        configure_sqlite_durability()
         if not _schema_ready:
             from backend.sessions import models as _models  # noqa: F401
 
@@ -227,80 +235,112 @@ class SessionService:
         tags: list[str] | None = None,
         user_id: str = "anonymous",
     ) -> dict[str, Any]:
+        """
+        Create a session atomically.
+
+        Session row + legacy memory dual-write commit in ONE transaction.
+        Response is returned only after a fresh-connection verify (no race with GET).
+        """
         ensure_session_tables()
         sid = (session_id or "").strip() or str(uuid.uuid4())
         now = _utcnow()
         resolved_title = (title or "").strip() or "New analysis"
+        owner = user_id or "anonymous"
 
-        db = SessionLocal()
-        try:
-            existing = (
-                db.query(AnalysisSession)
-                .filter(AnalysisSession.session_id == sid)
-                .first()
-            )
-            owner = user_id or "anonymous"
-            if existing is not None:
-                if (existing.user_id or "anonymous") != owner:
-                    raise SessionAccessDenied(sid, owner)
-                if existing.deleted:
-                    # Re-open soft-deleted id as a fresh shell
-                    existing.deleted = False
-                    existing.archived = False
-                    existing.status = "active"
-                    existing.title = resolved_title
-                    existing.updated_at = now
-                    existing.last_activity_at = now
-                    existing.user_id = owner
-                    if dataset_id is not None:
-                        existing.dataset_id = dataset_id
-                    if dataset_name is not None:
-                        existing.dataset_name = dataset_name
-                    if dataset_path is not None:
-                        existing.dataset_path = dataset_path
-                    if dataset_url is not None:
-                        existing.dataset_url = dataset_url
-                    if tags is not None:
-                        existing.tags_json = list(tags)
-                    db.commit()
-                    db.refresh(existing)
-                    self._dual_write_legacy(db, existing)
+        with session_lock(sid):
+            db = SessionLocal()
+            try:
+                # Serialize writers under SQLite
+                try:
+                    db.execute(text("BEGIN IMMEDIATE"))
+                except Exception:
+                    pass
+
+                existing = (
+                    db.query(AnalysisSession)
+                    .filter(AnalysisSession.session_id == sid)
+                    .first()
+                )
+                if existing is not None:
+                    if (existing.user_id or "anonymous") != owner:
+                        raise SessionAccessDenied(sid, owner)
+                    if existing.deleted:
+                        # Re-open soft-deleted id as a fresh shell
+                        existing.deleted = False
+                        existing.archived = False
+                        existing.status = "active"
+                        existing.title = resolved_title
+                        existing.updated_at = now
+                        existing.last_activity_at = now
+                        existing.user_id = owner
+                        if dataset_id is not None:
+                            existing.dataset_id = dataset_id
+                        if dataset_name is not None:
+                            existing.dataset_name = dataset_name
+                        if dataset_path is not None:
+                            existing.dataset_path = dataset_path
+                        if dataset_url is not None:
+                            existing.dataset_url = dataset_url
+                        if tags is not None:
+                            existing.tags_json = list(tags)
+                        self._dual_write_legacy(db, existing, commit=False)
+                        commit_and_barrier(db)
+                        db.refresh(existing)
+                        summary = self._summary_dict(existing)
+                    else:
+                        # Idempotent create: return existing (already committed)
+                        try:
+                            db.rollback()  # end BEGIN IMMEDIATE without changes
+                        except Exception:
+                            pass
+                        summary = self._summary_dict(existing)
+                else:
+                    row = AnalysisSession(
+                        session_id=sid,
+                        user_id=owner,
+                        title=resolved_title,
+                        created_at=now,
+                        updated_at=now,
+                        last_activity_at=now,
+                        dataset_id=dataset_id,
+                        dataset_name=dataset_name,
+                        dataset_path=dataset_path,
+                        dataset_url=dataset_url,
+                        tags_json=list(tags or []),
+                        status="active",
+                        favorite=False,
+                        archived=False,
+                        deleted=False,
+                        pinned=False,
+                        pin_order=None,
+                        message_count=0,
+                    )
+                    db.add(row)
+                    db.flush()  # allocate PK before dual-write
+                    self._dual_write_legacy(db, row, commit=False)
+                    commit_and_barrier(db)
+                    db.refresh(row)
+                    summary = self._summary_dict(row)
+                    logger.info("Session created", extra={"session_id": sid})
+
+                # Reindex outside the critical write txn (best-effort)
+                try:
                     self._reindex(sid)
-                    return self._summary_dict(existing)
+                except Exception:
+                    pass
 
-                # Idempotent create: return existing
-                self._reindex(sid)
-                return self._summary_dict(existing)
-
-            row = AnalysisSession(
-                session_id=sid,
-                user_id=user_id or "anonymous",
-                title=resolved_title,
-                created_at=now,
-                updated_at=now,
-                last_activity_at=now,
-                dataset_id=dataset_id,
-                dataset_name=dataset_name,
-                dataset_path=dataset_path,
-                dataset_url=dataset_url,
-                tags_json=list(tags or []),
-                status="active",
-                favorite=False,
-                archived=False,
-                deleted=False,
-                pinned=False,
-                pin_order=None,
-                message_count=0,
-            )
-            db.add(row)
-            db.commit()
-            db.refresh(row)
-            self._dual_write_legacy(db, row)
-            self._reindex(sid)
-            logger.info("Session created", extra={"session_id": sid})
-            return self._summary_dict(row)
-        finally:
-            db.close()
+                # Hard guarantee: GET on a new connection sees the row
+                verify_session_row(sid, user_id=owner, retries=8, delay_s=0.01)
+                summary["committed"] = True
+                return summary
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                raise
+            finally:
+                db.close()
 
     def ensure_session(
         self,
@@ -314,55 +354,71 @@ class SessionService:
         sid = (session_id or "").strip()
         if not sid:
             raise ValueError("session_id is required")
+        owner = user_id or "anonymous"
 
-        db = SessionLocal()
-        try:
-            row = (
-                db.query(AnalysisSession)
-                .filter(AnalysisSession.session_id == sid)
-                .first()
-            )
-            owner = user_id or "anonymous"
-            if row is not None:
-                # Phase 8: do not allow another user to adopt an existing session
-                if (row.user_id or "anonymous") != owner:
-                    raise SessionAccessDenied(sid, owner)
-                if row.deleted:
-                    row.deleted = False
-                    row.status = "active"
-                    row.updated_at = _utcnow()
-                    db.commit()
-                    db.refresh(row)
+        with session_lock(sid):
+            db = SessionLocal()
+            try:
+                try:
+                    db.execute(text("BEGIN IMMEDIATE"))
+                except Exception:
+                    pass
+
+                row = (
+                    db.query(AnalysisSession)
+                    .filter(AnalysisSession.session_id == sid)
+                    .first()
+                )
+                if row is not None:
+                    # Phase 8: do not allow another user to adopt an existing session
+                    if (row.user_id or "anonymous") != owner:
+                        raise SessionAccessDenied(sid, owner)
+                    if row.deleted:
+                        row.deleted = False
+                        row.status = "active"
+                        row.updated_at = _utcnow()
+                        self._dual_write_legacy(db, row, commit=False)
+                        commit_and_barrier(db)
+                        db.refresh(row)
+                    return self._detach_copy(db, row)
+
+                # Lazy-migrate from legacy flat table
+                legacy = (
+                    db.query(SessionMemory)
+                    .filter(SessionMemory.session_id == sid)
+                    .first()
+                )
+                if legacy is not None:
+                    row = self._migrate_legacy(db, legacy, user_id=owner)
+                    return self._detach_copy(db, row)
+
+                now = _utcnow()
+                row = AnalysisSession(
+                    session_id=sid,
+                    user_id=owner,
+                    title=(title or "").strip() or "New analysis",
+                    created_at=now,
+                    updated_at=now,
+                    last_activity_at=now,
+                    status="active",
+                    message_count=0,
+                )
+                db.add(row)
+                db.flush()
+                self._dual_write_legacy(db, row, commit=False)
+                commit_and_barrier(db)
+                db.refresh(row)
+                # Verify before callers proceed to GET / append
+                verify_session_row(sid, user_id=owner, retries=6, delay_s=0.01)
                 return self._detach_copy(db, row)
-
-            # Lazy-migrate from legacy flat table
-            legacy = (
-                db.query(SessionMemory)
-                .filter(SessionMemory.session_id == sid)
-                .first()
-            )
-            if legacy is not None:
-                row = self._migrate_legacy(db, legacy, user_id=owner)
-                return self._detach_copy(db, row)
-
-            now = _utcnow()
-            row = AnalysisSession(
-                session_id=sid,
-                user_id=owner,
-                title=(title or "").strip() or "New analysis",
-                created_at=now,
-                updated_at=now,
-                last_activity_at=now,
-                status="active",
-                message_count=0,
-            )
-            db.add(row)
-            db.commit()
-            db.refresh(row)
-            self._dual_write_legacy(db, row)
-            return self._detach_copy(db, row)
-        finally:
-            db.close()
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                raise
+            finally:
+                db.close()
 
     def list_sessions(
         self,
@@ -538,27 +594,11 @@ class SessionService:
             raise SessionNotFoundError(session_id or "")
         owner = (user_id or "anonymous").strip() or "anonymous"
 
-        db = SessionLocal()
-        try:
-            row = (
-                db.query(AnalysisSession)
-                .options(
-                    selectinload(AnalysisSession.messages),
-                    selectinload(AnalysisSession.artifacts),
-                )
-                .filter(AnalysisSession.session_id == sid)
-                .first()
-            )
-
-            if row is None:
-                legacy = (
-                    db.query(SessionMemory)
-                    .filter(SessionMemory.session_id == sid)
-                    .first()
-                )
-                if legacy is None:
-                    raise SessionNotFoundError(sid)
-                row = self._migrate_legacy(db, legacy, user_id=owner)
+        # Retry briefly — eliminates rare GET-immediately-after-CREATE races
+        last_err: Exception | None = None
+        for attempt in range(6):
+            db = SessionLocal()
+            try:
                 row = (
                     db.query(AnalysisSession)
                     .options(
@@ -569,16 +609,50 @@ class SessionService:
                     .first()
                 )
 
-            if row is None:
-                raise SessionNotFoundError(sid)
-            if (row.user_id or "anonymous") != owner:
-                raise SessionAccessDenied(sid, owner)
-            if row.deleted and not include_deleted:
-                raise SessionNotFoundError(sid)
+                if row is None:
+                    legacy = (
+                        db.query(SessionMemory)
+                        .filter(SessionMemory.session_id == sid)
+                        .first()
+                    )
+                    if legacy is None:
+                        last_err = SessionNotFoundError(sid)
+                        if attempt < 5:
+                            import time as _time
 
-            return self._detail_dict(row)
-        finally:
-            db.close()
+                            _time.sleep(0.015 * (attempt + 1))
+                            continue
+                        raise last_err
+                    row = self._migrate_legacy(db, legacy, user_id=owner)
+                    row = (
+                        db.query(AnalysisSession)
+                        .options(
+                            selectinload(AnalysisSession.messages),
+                            selectinload(AnalysisSession.artifacts),
+                        )
+                        .filter(AnalysisSession.session_id == sid)
+                        .first()
+                    )
+
+                if row is None:
+                    last_err = SessionNotFoundError(sid)
+                    if attempt < 5:
+                        import time as _time
+
+                        _time.sleep(0.015 * (attempt + 1))
+                        continue
+                    raise last_err
+                if (row.user_id or "anonymous") != owner:
+                    raise SessionAccessDenied(sid, owner)
+                if row.deleted and not include_deleted:
+                    raise SessionNotFoundError(sid)
+
+                return self._detail_dict(row)
+            finally:
+                db.close()
+        if last_err:
+            raise last_err
+        raise SessionNotFoundError(sid)
 
     def update_session(
         self,
@@ -843,6 +917,7 @@ class SessionService:
                         )
                     )
                 clone.message_count = len(msg_id_map)
+                db.flush()  # FK: artifacts.message_id → session_messages.id
 
             if include_artifacts:
                 for art in source.artifacts or []:
@@ -1030,6 +1105,8 @@ class SessionService:
             row.message_count = len(msg_id_map) if msg_id_map else len(
                 [m for m in messages if isinstance(m, dict)]
             )
+            if msg_id_map or messages:
+                db.flush()  # FK: artifacts.message_id → session_messages.id
 
             for art in artifacts:
                 if not isinstance(art, dict):
@@ -1170,44 +1247,58 @@ class SessionService:
         ensure_session_tables()
         self.ensure_session(session_id, user_id=user_id)
 
-        db = SessionLocal()
-        try:
-            row = self._require_row(
-                db, session_id, user_id=user_id, allow_deleted=False
-            )
-            seq = self._next_seq(db, session_id)
-            msg = SessionMessage(
-                id=str(uuid.uuid4()),
-                session_id=session_id,
-                seq=seq,
-                role="user",
-                content=content or "",
-                created_at=_utcnow(),
-                payload=None,
-            )
-            db.add(msg)
+        with session_lock(session_id):
+            db = SessionLocal()
+            try:
+                try:
+                    db.execute(text("BEGIN IMMEDIATE"))
+                except Exception:
+                    pass
+                row = self._require_row(
+                    db, session_id, user_id=user_id, allow_deleted=False
+                )
+                seq = self._next_seq(db, session_id)
+                msg = SessionMessage(
+                    id=str(uuid.uuid4()),
+                    session_id=session_id,
+                    seq=seq,
+                    role="user",
+                    content=content or "",
+                    created_at=_utcnow(),
+                    payload=None,
+                )
+                db.add(msg)
 
-            row.message_count = int(row.message_count or 0) + 1
-            row.last_query = content or ""
-            row.updated_at = _utcnow()
-            row.last_activity_at = row.updated_at
-            if not row.title or row.title == "New analysis":
-                preview = (content or "").strip().replace("\n", " ")
-                if preview:
-                    row.title = preview[:72] + ("…" if len(preview) > 72 else "")
+                row.message_count = int(row.message_count or 0) + 1
+                row.last_query = content or ""
+                row.updated_at = _utcnow()
+                row.last_activity_at = row.updated_at
+                if not row.title or row.title == "New analysis":
+                    preview = (content or "").strip().replace("\n", " ")
+                    if preview:
+                        row.title = preview[:72] + ("…" if len(preview) > 72 else "")
 
-            db.commit()
-            db.refresh(msg)
-            self._dual_write_legacy(db, row)
-            self._reindex(session_id)
-            return {
-                "id": msg.id,
-                "seq": msg.seq,
-                "role": msg.role,
-                "content": msg.content,
-            }
-        finally:
-            db.close()
+                self._dual_write_legacy(db, row, commit=False)
+                commit_and_barrier(db)
+                db.refresh(msg)
+                try:
+                    self._reindex(session_id)
+                except Exception:
+                    pass
+                return {
+                    "id": msg.id,
+                    "seq": msg.seq,
+                    "role": msg.role,
+                    "content": msg.content,
+                }
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                raise
+            finally:
+                db.close()
 
     def record_cached_assistant_turn(
         self,
@@ -1334,8 +1425,34 @@ class SessionService:
         answer = str(safe_result.get("answer") or "")
         now = _utcnow()
 
+        with session_lock(session_id):
+            return self._record_assistant_turn_locked(
+                session_id,
+                question=question,
+                safe_result=safe_result,
+                answer=answer,
+                now=now,
+                file_path=file_path,
+                user_id=user_id,
+            )
+
+    def _record_assistant_turn_locked(
+        self,
+        session_id: str,
+        *,
+        question: str,
+        safe_result: dict[str, Any],
+        answer: str,
+        now: datetime,
+        file_path: str | None,
+        user_id: str,
+    ) -> dict[str, Any]:
         db = SessionLocal()
         try:
+            try:
+                db.execute(text("BEGIN IMMEDIATE"))
+            except Exception:
+                pass
             row = self._require_row(
                 db, session_id, user_id=user_id, allow_deleted=False
             )
@@ -1391,21 +1508,19 @@ class SessionService:
             row.updated_at = now
             row.last_activity_at = now
 
-            # --- assistant message ---
+            # --- assistant message (flush before artifacts — FK to session_messages) ---
             seq = self._next_seq(db, session_id)
             msg_id = str(uuid.uuid4())
             artifact_ids: list[str] = []
 
-            # Build artifacts first so message payload can reference them
+            # Pre-build artifacts to know ids for message payload, but insert message first
             artifacts = self._build_artifacts_from_result(
                 session_id=session_id,
                 message_id=msg_id,
                 result=safe_result,
                 now=now,
             )
-            for art in artifacts:
-                db.add(art)
-                artifact_ids.append(art.id)
+            artifact_ids = [art.id for art in artifacts]
 
             payload = {
                 "artifact_ids": artifact_ids,
@@ -1429,12 +1544,17 @@ class SessionService:
                 payload=payload,
             )
             db.add(msg)
-            row.message_count = int(row.message_count or 0) + 1
+            db.flush()  # message must exist before artifacts with message_id FK
 
-            db.commit()
+            for art in artifacts:
+                db.add(art)
+            row.message_count = int(row.message_count or 0) + 1
+            db.flush()
+
+            # Single transaction: session fields + messages + artifacts + legacy memory
+            self._dual_write_legacy(db, row, commit=False)
+            commit_and_barrier(db)
             db.refresh(msg)
-            self._dual_write_legacy(db, row)
-            self._reindex(session_id)
 
             # Phase 7: fold older messages when conversation grows long
             summary_info = None
@@ -1450,6 +1570,22 @@ class SessionService:
                     extra={"session_id": session_id, "error": str(sum_exc)},
                 )
 
+            try:
+                self._reindex(session_id)
+            except Exception:
+                pass
+
+            # Read-after-write: session + messages durable before callers respond
+            try:
+                finalize_session_write(
+                    session_id, user_id=user_id, expect_messages=True
+                )
+            except Exception as fin_exc:
+                logger.warning(
+                    "Session finalize verify soft-failed",
+                    extra={"session_id": session_id, "error": str(fin_exc)},
+                )
+
             logger.info(
                 "Assistant turn persisted",
                 extra={
@@ -1462,10 +1598,17 @@ class SessionService:
                 "message_id": msg_id,
                 "seq": seq,
                 "artifact_ids": artifact_ids,
+                "committed": True,
             }
             if summary_info:
                 result_payload["summarization"] = summary_info
             return result_payload
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            raise
         finally:
             db.close()
 
@@ -1873,6 +2016,7 @@ class SessionService:
                     payload={},
                 )
             )
+            db.flush()  # message row must exist before artifact FKs
             if legacy.eda_summary:
                 db.add(
                     SessionArtifact(
@@ -1921,36 +2065,58 @@ class SessionService:
             count += 1
         return count
 
-    def _dual_write_legacy(self, db: DbSession, row: AnalysisSession) -> None:
-        """Keep session_memory in sync so old get_session/save_session still work."""
+    def _dual_write_legacy(
+        self,
+        db: DbSession,
+        row: AnalysisSession,
+        *,
+        commit: bool = True,
+    ) -> None:
+        """Keep session_memory in sync so old get_session/save_session still work.
+
+        When commit=False the caller owns the transaction (atomic session create/turn).
+        Never roll back the outer transaction on dual-write failure when commit=False.
+        """
+        sid = getattr(row, "session_id", None)
         try:
-            legacy = (
-                db.query(SessionMemory)
-                .filter(SessionMemory.session_id == row.session_id)
-                .first()
-            )
-            if legacy is None:
-                legacy = SessionMemory(session_id=row.session_id)
-                db.add(legacy)
-            legacy.dataset_path = row.dataset_path
-            legacy.dataset_url = row.dataset_url
-            legacy.dataset_topic = row.dataset_topic
-            legacy.last_column = row.last_column
-            legacy.last_columns = row.last_columns
-            legacy.last_chart_type = row.last_chart_type
-            legacy.last_intent = row.last_intent
-            legacy.last_operation = row.last_operation
-            legacy.last_forecast_target = row.last_forecast_target
-            legacy.last_query = row.last_query
-            legacy.last_insight = row.last_insight
-            legacy.eda_summary = row.eda_summary
-            db.commit()
+            with db.no_autoflush:
+                legacy = (
+                    db.query(SessionMemory)
+                    .filter(SessionMemory.session_id == sid)
+                    .first()
+                )
+                if legacy is None:
+                    legacy = SessionMemory(session_id=sid)
+                    db.add(legacy)
+                legacy.dataset_path = row.dataset_path
+                legacy.dataset_url = row.dataset_url
+                legacy.dataset_topic = row.dataset_topic
+                legacy.last_column = row.last_column
+                legacy.last_columns = row.last_columns
+                legacy.last_chart_type = row.last_chart_type
+                legacy.last_intent = row.last_intent
+                legacy.last_operation = row.last_operation
+                legacy.last_forecast_target = row.last_forecast_target
+                legacy.last_query = row.last_query
+                legacy.last_insight = row.last_insight
+                legacy.eda_summary = row.eda_summary
+            if commit:
+                db.commit()
+            else:
+                db.flush()
         except Exception as exc:
-            db.rollback()
+            if commit:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
             logger.warning(
                 "Legacy dual-write failed",
-                extra={"session_id": row.session_id, "error": str(exc)},
+                extra={"session_id": sid, "error": str(exc)},
             )
+            if not commit:
+                # Re-raise so outer atomic txn can roll back cleanly
+                raise
 
     def _summary_dict(self, row: AnalysisSession) -> dict[str, Any]:
         return sanitize_for_json(
@@ -2051,6 +2217,8 @@ class SessionService:
                 "tags": list(row.tags_json or []),
                 "message_count": int(row.message_count or 0),
                 "chat_history": chat_history,
+                # Alias for clients / regression suites that expect `messages`
+                "messages": chat_history,
                 "generated_charts": charts,
                 "forecast_results": forecasts,
                 "analysis_results": analysis_results,
