@@ -294,28 +294,36 @@ def _build_state(session, question=None, file_path=None):
         file_path_override=file_path,
     )
 
-    # Hard stop: "analyze gold..." must NOT keep India GDP from session memory.
-    if topic_mismatch and not file_path:
+    # Hard stop: "Analyze IPL" after India GDP must release the GDP file_path.
+    effective_file_path = file_path
+    if topic_mismatch:
+        previous_topic = dataset_topic
+        previous_path = file_path or dataset_path
         dataset = None
         dataset_url = None
         dataset_path = None
+        effective_file_path = None  # force discovery / new bind
+        dataset_topic = None
+        reuse = False
         logger.info(
             "Session dataset cleared for new topic",
             extra={
                 "action": "build_state",
-                "previous_topic": dataset_topic,
+                "previous_topic": previous_topic,
+                "previous_path": previous_path,
                 "question": question,
+                "topic_mismatch": True,
+                "file_path": None,
+                "reuse_dataset": False,
             },
         )
-        dataset_topic = None
-        reuse = False
     else:
         dataset = None if file_path else _load_session_dataset(session)
         if dataset is not None:
             reuse = True
             topic_mismatch = False
 
-    bound_path = None if file_path else dataset_path
+    bound_path = None if effective_file_path else dataset_path
     return {
         "data": dataset,
         "last_dataset": dataset,
@@ -347,9 +355,9 @@ def _build_state(session, question=None, file_path=None):
         "dataset_topic": dataset_topic,
         "dataset_url": dataset_url,
         "dataset_path": bound_path,
-        "file_path": file_path or bound_path,
+        "file_path": effective_file_path or bound_path,
         "local_path": bound_path if bound_path and not str(bound_path).startswith(("http://", "https://")) else None,
-        "has_active_dataset": dataset is not None or bool(bound_path or dataset_url),
+        "has_active_dataset": dataset is not None or bool(bound_path or dataset_url or effective_file_path),
         "reuse_active_dataset": bool(reuse and not topic_mismatch),
         "topic_mismatch": topic_mismatch,
         "force_reload_dataset": topic_mismatch,
@@ -753,27 +761,51 @@ def ask(
         with time_stage("session"):
             session = get_session(session_id)
 
-        # Detect topic switch early so we never hit cache/fingerprint for the *old* dataset
+        # --- Topic switch: release stale upload even if client still sends it ---
+        # Upload India GDP → "Analyze IPL" must NOT keep analyzing GDP.
         topic_switch = False
-        if session is not None and not normalized_file_path:
-            try:
-                from backend.memory.continuity import is_new_dataset_topic
+        try:
+            from backend.memory.topic_switch import (
+                log_dataset_binding_decision,
+                release_bound_file_if_topic_switch,
+            )
 
-                topic_switch = is_new_dataset_topic(
-                    question,
-                    getattr(session, "dataset_topic", None),
-                    has_active_dataset=bool(
-                        getattr(session, "dataset_path", None)
-                        or getattr(session, "dataset_url", None)
-                    ),
+            released_path, topic_switch = release_bound_file_if_topic_switch(
+                question,
+                normalized_file_path,
+                session_topic=getattr(session, "dataset_topic", None) if session else None,
+                session_name=(
+                    getattr(session, "dataset_name", None) if session else None
                 )
-            except Exception:
-                topic_switch = False
+                or (getattr(session, "dataset_topic", None) if session else None),
+                session_path=getattr(session, "dataset_path", None) if session else None,
+            )
+            if topic_switch:
+                logger.info(
+                    "ASK_TOPIC_SWITCH",
+                    extra={
+                        "incoming_prompt": (question or "")[:120],
+                        "released_file_path": normalized_file_path,
+                        "session_topic": getattr(session, "dataset_topic", None)
+                        if session
+                        else None,
+                        "session_path": getattr(session, "dataset_path", None)
+                        if session
+                        else None,
+                    },
+                )
+            normalized_file_path = released_path
+        except Exception as ts_exc:
+            logger.warning(
+                "Topic switch detect failed",
+                extra={"error": str(ts_exc)},
+            )
+            topic_switch = False
 
         # --- Ask-level cache lookup (skip Planner/EDA/Viz/Forecast on hit) ---
         with time_stage("cache"):
             # Prefer session-stored fingerprint (no file re-hash)
-            # NEVER reuse session fingerprint when the user switched topics (e.g. gold after GDP)
+            # NEVER reuse session fingerprint when the user switched topics (e.g. IPL after GDP)
             cache_fp = None
             if session is not None and not topic_switch:
                 try:
@@ -783,33 +815,52 @@ def ask(
                     cache_fp = blob.get("dataset_fingerprint") or None
                 except Exception:
                     cache_fp = None
-            if not cache_fp:
+            if not cache_fp and not topic_switch:
                 cache_fp = resolve_dataset_fingerprint(
                     file_path=normalized_file_path
                     if normalized_file_path and not _is_remote_reference(normalized_file_path)
                     else None,
-                    dataset_path=(
-                        None
-                        if topic_switch
-                        else (getattr(session, "dataset_path", None) if session else None)
-                    ),
-                    dataset_url=(
-                        None
-                        if topic_switch
-                        else (getattr(session, "dataset_url", None) if session else None)
-                    ),
+                    dataset_path=getattr(session, "dataset_path", None) if session else None,
+                    dataset_url=getattr(session, "dataset_url", None) if session else None,
                 )
-            # Skip expensive registry match_topic on warm path — only if still no fp
-            # and no session binding (rare cold open-world case without file)
+            elif not cache_fp and normalized_file_path:
+                # Explicit new upload path only
+                cache_fp = resolve_dataset_fingerprint(
+                    file_path=normalized_file_path
+                    if not _is_remote_reference(normalized_file_path)
+                    else None,
+                    dataset_path=None,
+                    dataset_url=None,
+                )
 
             cached_body, cache_meta = (None, {})
-            if cache_fp:
+            if cache_fp and not topic_switch:
                 cached_body, cache_meta = ask_cache.get(
                     cache_fp,
                     question,
                     intent=intent,
                     file_path=normalized_file_path,
                 )
+            elif topic_switch:
+                logger.info(
+                    "Cache skipped due to topic switch",
+                    extra={"prompt": (question or "")[:80]},
+                )
+
+        try:
+            from backend.memory.topic_switch import log_dataset_binding_decision
+
+            log_dataset_binding_decision(
+                prompt=question,
+                planner_topic=None,
+                current_dataset=getattr(session, "dataset_topic", None) if session else None,
+                reuse_dataset=not topic_switch and bool(normalized_file_path or (session and (session.dataset_path or session.dataset_url))),
+                topic_mismatch=topic_switch,
+                file_path=normalized_file_path,
+                cache_key=cache_fp,
+            )
+        except Exception:
+            pass
 
         if cached_body:
             # Warm path: Auth ✓ · Session update ✓ · Serialize ✓
@@ -907,6 +958,7 @@ def ask(
             # Payload already JSON-safe from store; light wrap only
             return response
 
+        # Pass path only when not a topic switch (already released above when needed)
         state = _build_state(
             session=session,
             question=question,
@@ -914,9 +966,14 @@ def ask(
         )
         state["session_id"] = session_id
         state["user_id"] = user_id
-
-        if normalized_file_path:
-            state["file_path"] = normalized_file_path
+        state["question"] = question
+        # Prefer flags from build_state (authoritative)
+        topic_switch = bool(state.get("topic_mismatch") or topic_switch)
+        if topic_switch:
+            state["topic_mismatch"] = True
+            state["force_reload_dataset"] = True
+            state["reuse_active_dataset"] = False
+            normalized_file_path = None
 
         # Phase 5: load → inject memory hierarchy into LangGraph state
         memory_bundle = None
@@ -926,17 +983,35 @@ def ask(
                     session_id,
                     user_id=user_id,
                     question=question,
-                    dataset_topic=getattr(session, "dataset_topic", None) if session else None,
-                    dataset_url=getattr(session, "dataset_url", None) if session else None,
+                    dataset_topic=(
+                        None
+                        if topic_switch
+                        else (getattr(session, "dataset_topic", None) if session else None)
+                    ),
+                    dataset_url=(
+                        None
+                        if topic_switch
+                        else (getattr(session, "dataset_url", None) if session else None)
+                    ),
                     dataset_path=(
                         normalized_file_path
                         if normalized_file_path
                         and not _is_remote_reference(normalized_file_path)
-                        else (getattr(session, "dataset_path", None) if session else None)
+                        else (
+                            None
+                            if topic_switch
+                            else (
+                                getattr(session, "dataset_path", None) if session else None
+                            )
+                        )
                     ),
                     dataset_id=None,
                 )
                 state = memory_svc.inject_into_state(state, memory_bundle)
+                if topic_switch:
+                    from backend.memory.topic_switch import apply_topic_switch_to_state
+
+                    state = apply_topic_switch_to_state(state)
         except Exception as mem_exc:
             logger.warning(
                 "Memory hierarchy load failed on ask",

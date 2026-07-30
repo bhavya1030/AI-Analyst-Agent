@@ -388,34 +388,48 @@ class MemoryHierarchyService:
         )
 
         # --- Pre-detect topic switch before path/frame injection ---
-        if not state.get("topic_mismatch") and not state.get("file_path"):
+        # Also runs when file_path is still set (stale client upload for GDP + "Analyze IPL")
+        if not state.get("topic_mismatch"):
             try:
-                from backend.memory.continuity import is_new_dataset_topic
+                from backend.memory.topic_switch import (
+                    apply_topic_switch_to_state,
+                    detect_topic_switch,
+                )
 
                 question = state.get("question") or state.get("raw_question")
-                active_topic = l2.dataset_topic or l2.dataset_name
-                has_binding = bool(
-                    l2.dataset_path
-                    or l2.dataset_url
-                    or l2.dataset_fingerprint
+                path = (
+                    state.get("file_path")
+                    or state.get("local_path")
+                    or l2.dataset_path
                     or l3.dataset_path
-                    or l3.dataset_url
                 )
-                if has_binding and is_new_dataset_topic(
+                if detect_topic_switch(
                     question,
-                    active_topic,
-                    has_active_dataset=has_binding,
+                    dataset_topic=l2.dataset_topic or state.get("dataset_topic"),
+                    dataset_name=l2.dataset_name or state.get("dataset_name"),
+                    dataset_path=l2.dataset_path or l3.dataset_path,
+                    file_path=path,
+                    has_active_dataset=bool(
+                        path
+                        or l2.dataset_url
+                        or l2.dataset_fingerprint
+                        or l3.dataset_url
+                        or state.get("data") is not None
+                    ),
                 ):
-                    state["topic_mismatch"] = True
-                    state["force_reload_dataset"] = True
-                    state["reuse_active_dataset"] = False
-                    # Do not carry prior topic labels into discovery
-                    state.pop("dataset_topic", None)
+                    state = apply_topic_switch_to_state(
+                        state,
+                        force=True,
+                        active_topic=l2.dataset_topic or l2.dataset_name,
+                        active_path=l2.dataset_path or l3.dataset_path,
+                    )
                     logger.info(
                         "Topic mismatch pre-detect — skip session dataset rebind",
                         extra={
                             "question": (question or "")[:80],
-                            "active_topic": active_topic,
+                            "active_topic": l2.dataset_topic,
+                            "file_path": None,
+                            "topic_mismatch": True,
                         },
                     )
             except Exception as exc:
