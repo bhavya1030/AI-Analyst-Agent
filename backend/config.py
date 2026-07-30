@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     FORECAST_TIMEOUT_SECONDS: float = 10.0
     # When True and budget allows, Prophet may be selected for daily seasonal series.
     FORECAST_ALLOW_PROPHET: bool = False
+    # Retrieval v3 — concurrency + budgets (never block /v1/ask on one provider)
+    RETRIEVAL_PROVIDER_TIMEOUT_SECONDS: float = 5.0
+    RETRIEVAL_GLOBAL_BUDGET_SECONDS: float = 12.0
+    RETRIEVAL_CIRCUIT_FAILURE_THRESHOLD: int = 3
+    RETRIEVAL_CIRCUIT_OPEN_SECONDS: float = 1800.0  # 30 minutes
+    RETRIEVAL_MAX_PARALLEL_PROVIDERS: int = 8
     EMBEDDING_MODEL_NAME: str = "sentence-transformers/all-MiniLM-L6-v2"
     SIMILARITY_THRESHOLD: int = 55
     # Semantic retrieval (cosine / IP on normalized embeddings, 0–1)
