@@ -1209,6 +1209,110 @@ class SessionService:
         finally:
             db.close()
 
+    def record_cached_assistant_turn(
+        self,
+        session_id: str,
+        *,
+        question: str,
+        result: dict[str, Any],
+        file_path: str | None = None,
+        user_id: str = "anonymous",
+    ) -> dict[str, Any]:
+        """
+        Lightweight session update for ask-cache hits.
+
+        Does NOT rebuild chart/forecast artifacts (they already exist from the
+        cold run). Only appends the assistant message + refreshes continuity
+        fields so warm requests stay under ~2s.
+        """
+        ensure_session_tables()
+        self.ensure_session(session_id, user_id=user_id)
+
+        delta = result.get("session_delta") if isinstance(result, dict) else None
+        if not isinstance(delta, dict):
+            delta = {}
+        answer = str(
+            (result or {}).get("answer")
+            or (result or {}).get("cached_answer")
+            or ""
+        )[:8000]
+        now = _utcnow()
+
+        db = SessionLocal()
+        try:
+            row = self._require_row(
+                db, session_id, user_id=user_id, allow_deleted=False
+            )
+            # Continuity only — skip _sanitize_graph_result / artifact rebuild
+            topic = delta.get("dataset_topic") or result.get("dataset_topic")
+            if topic:
+                row.dataset_topic = topic
+            name = delta.get("dataset_name") or result.get("dataset_name")
+            if name and (not row.dataset_name or "user provided" in str(row.dataset_name).lower()):
+                row.dataset_name = name
+            if delta.get("last_intent") or result.get("last_intent"):
+                row.last_intent = delta.get("last_intent") or result.get("last_intent")
+            if delta.get("last_operation") or result.get("last_operation"):
+                row.last_operation = delta.get("last_operation") or result.get(
+                    "last_operation"
+                )
+            if delta.get("last_chart_type") or result.get("last_chart_type"):
+                row.last_chart_type = delta.get("last_chart_type") or result.get(
+                    "last_chart_type"
+                )
+            cols = (
+                delta.get("last_columns_used")
+                or result.get("last_columns_used")
+                or result.get("columns")
+                or []
+            )
+            if cols:
+                row.last_columns = list(cols)[:50]
+                row.last_used_columns = list(row.last_columns or [])
+            row.last_query = question
+            if answer:
+                row.last_insight = answer[:2000]
+            row.updated_at = now
+            row.last_activity_at = now
+
+            seq = self._next_seq(db, session_id)
+            msg_id = str(uuid.uuid4())
+            msg = SessionMessage(
+                id=msg_id,
+                session_id=session_id,
+                seq=seq,
+                role="assistant",
+                content=answer or "(cached response)",
+                created_at=now,
+                payload={
+                    "from_cache": True,
+                    "intent": row.last_intent,
+                    "dataset_topic": row.dataset_topic,
+                    "has_charts": bool(result.get("charts") or result.get("chart")),
+                    "has_forecast": bool(
+                        result.get("forecast") or result.get("forecast_chart")
+                    ),
+                },
+            )
+            db.add(msg)
+            row.message_count = int(row.message_count or 0) + 1
+            db.commit()
+            # Skip FTS reindex + summarizer on warm path (major cost)
+            return {
+                "message_id": msg_id,
+                "artifact_ids": [],
+                "from_cache": True,
+            }
+        except Exception as exc:
+            db.rollback()
+            logger.warning(
+                "Cached assistant turn failed",
+                extra={"session_id": session_id, "error": str(exc)},
+            )
+            return {"message_id": None, "artifact_ids": [], "from_cache": True, "error": str(exc)}
+        finally:
+            db.close()
+
     def record_assistant_turn(
         self,
         session_id: str,

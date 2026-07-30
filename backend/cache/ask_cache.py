@@ -222,9 +222,20 @@ class AskCacheService:
             body["cache_hit"] = True
             body["cache_kind"] = KIND_ASK
             body["dataset_fingerprint"] = fingerprint
+            cold_ms = payload.get("_cold_ms")
+            try:
+                cold_ms_f = float(cold_ms) if cold_ms is not None else None
+            except Exception:
+                cold_ms_f = None
+            saved = None
+            if cold_ms_f is not None:
+                saved = max(0.0, cold_ms_f - elapsed)
             return body, {
                 "cache_hit": True,
                 "lookup_ms": round(elapsed, 2),
+                "cache_latency_ms": round(elapsed, 2),
+                "cold_ms": cold_ms_f,
+                "saved_time_ms": round(saved, 2) if saved is not None else None,
                 "fingerprint": fingerprint,
                 "intent": params.get("intent"),
                 "params_hash": params_hash(params),
@@ -276,6 +287,24 @@ class AskCacheService:
         store_body["dataset_fingerprint"] = fingerprint
         store_body["cached_question"] = normalize_question(question)
         store_body["cached_intent"] = params.get("intent")
+        if cold_ms is not None:
+            store_body["_cold_ms"] = float(cold_ms)
+        # Session delta: fields needed to refresh session without re-running graph
+        store_body["session_delta"] = {
+            "dataset_topic": response.get("dataset_topic") or "",
+            "dataset_name": response.get("dataset_name") or "",
+            "dataset_url": response.get("dataset_url") or "",
+            "last_intent": response.get("last_intent") or params.get("intent"),
+            "last_operation": response.get("last_operation"),
+            "last_chart_type": response.get("last_chart_type"),
+            "last_forecast_target": response.get("last_forecast_target"),
+            "last_columns_used": response.get("last_columns_used")
+            or response.get("columns")
+            or [],
+            "columns": response.get("columns") or [],
+            "rows": response.get("rows") or 0,
+            "dataset_fingerprint": fingerprint,
+        }
 
         key = self._cache.put(KIND_ASK, fingerprint, store_body, params)
         _record_store(cold_ms)
@@ -331,28 +360,41 @@ class AskCacheService:
             "cold_count": cold_n,
             "warm_count": warm_n,
             "durable": durable,
-            "target_hit_ratio_pct": 70.0,
-            "target_met": hit_ratio >= 0.70 if lookups >= 2 else None,
+            "target_hit_ratio_pct": 80.0,
+            "target_warm_ms": 2000.0,
+            "target_met": hit_ratio >= 0.80 if lookups >= 2 else None,
+            "warm_under_2s": (
+                (warm_ms / warm_n) < 2000.0 if warm_n else None
+            ),
         }
 
 
 def _extract_cacheable_response(response: dict[str, Any]) -> dict[str, Any]:
-    """Persist final user-facing analysis artifacts only (no DataFrames)."""
+    """Persist final user-facing analysis artifacts only (no DataFrames).
+
+    Already-sanitized payloads are stored once so warm hits avoid re-walking
+    large Plotly trees.
+    """
     charts = response.get("charts") or response.get("generated_charts") or []
     if not charts and response.get("chart"):
         charts = [response.get("chart")]
+
+    # Prefer slim chart payloads when full figure is huge (keep structure)
+    slim_charts = _slim_charts(charts)
 
     payload = {
         "answer": response.get("answer") or "",
         "dataset_summary": response.get("dataset_summary") or response.get("dataset_profile") or {},
         "dataset_topic": response.get("dataset_topic") or "",
-        "charts": charts,
-        "generated_charts": charts,
-        "chart": response.get("chart") or {},
+        "dataset_name": response.get("dataset_name") or "",
+        "charts": slim_charts,
+        "generated_charts": slim_charts,
+        "chart": response.get("chart") if not slim_charts else (slim_charts[0] if slim_charts else {}),
         "chart_columns_used": response.get("chart_columns_used") or [],
         "forecast": response.get("forecast") or [],
         "forecast_chart": response.get("forecast_chart") or {},
         "forecast_error": response.get("forecast_error") or "",
+        "forecast_model": response.get("forecast_model") or "",
         "chart_error": response.get("chart_error") or "",
         "detected_patterns": response.get("detected_patterns") or [],
         "insights": response.get("insights") or [],
@@ -372,6 +414,11 @@ def _extract_cacheable_response(response: dict[str, Any]) -> dict[str, Any]:
         "search_queries": response.get("search_queries") or [],
         "source": response.get("source") or response.get("dataset_source") or "",
         "product_promise": response.get("product_promise") or "",
+        "last_intent": response.get("last_intent"),
+        "last_operation": response.get("last_operation"),
+        "last_chart_type": response.get("last_chart_type"),
+        "last_forecast_target": response.get("last_forecast_target"),
+        "last_columns_used": response.get("last_columns_used") or response.get("columns") or [],
         # EDA / artifacts bundle
         "eda": {
             "dataset_profile": response.get("dataset_summary")
@@ -381,14 +428,37 @@ def _extract_cacheable_response(response: dict[str, Any]) -> dict[str, Any]:
             "insights": response.get("insights") or [],
         },
         "artifacts": {
-            "charts": charts,
+            "charts": slim_charts,
             "forecast": response.get("forecast") or [],
             "forecast_chart": response.get("forecast_chart") or {},
             "hypotheses": response.get("hypotheses") or [],
             "recommended_next_steps": response.get("recommended_next_steps") or [],
         },
+        "_sanitized": True,
     }
+    # Single sanitize at store time (warm path must not re-sanitize)
     return sanitize_for_json(payload)
+
+
+def _slim_charts(charts: Any) -> list[Any]:
+    """Keep chart payloads usable but avoid multi-MB binary embeds when possible."""
+    if not charts:
+        return []
+    if not isinstance(charts, list):
+        charts = [charts]
+    out: list[Any] = []
+    for ch in charts[:8]:
+        if not isinstance(ch, dict):
+            out.append(ch)
+            continue
+        # Drop heavy base64 image blobs if present (keep plotly data/layout)
+        slim = {k: v for k, v in ch.items() if k not in {"image_base64", "png", "thumbnail"}}
+        fig = slim.get("figure") or slim.get("plotly")
+        if isinstance(fig, dict) and "data" in fig:
+            # Keep figure structure as-is — already JSON-serializable after sanitize
+            pass
+        out.append(slim)
+    return out
 
 
 def _durable_kind_stats() -> dict[str, Any]:
