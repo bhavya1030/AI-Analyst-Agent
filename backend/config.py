@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///memory.db"
     DATA_DIR: Path = BASE_DIR / "data"
     FORECAST_HORIZON: int = 10
+    # Wall-clock budget for the entire forecast pipeline (train+predict+chart).
+    # Keep well below typical HTTP client timeouts (90–120s).
+    FORECAST_TIMEOUT_SECONDS: float = 10.0
+    # When True and budget allows, Prophet may be selected for daily seasonal series.
+    FORECAST_ALLOW_PROPHET: bool = False
     EMBEDDING_MODEL_NAME: str = "sentence-transformers/all-MiniLM-L6-v2"
     SIMILARITY_THRESHOLD: int = 55
     # Semantic retrieval (cosine / IP on normalized embeddings, 0–1)
