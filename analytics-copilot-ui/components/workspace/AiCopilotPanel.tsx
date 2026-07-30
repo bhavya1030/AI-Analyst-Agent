@@ -60,7 +60,7 @@ export default function AiCopilotPanel({
         mobile ? "animate-slide-up" : "animate-fade-in"
       }`}
     >
-      <div className="panel-header flex items-start justify-between gap-2">
+      <div className="panel-header flex shrink-0 items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="label-caps text-accent">AI Copilot</p>
           <h2 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
@@ -78,32 +78,35 @@ export default function AiCopilotPanel({
         ) : null}
       </div>
 
-      {/* Chat */}
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex items-center gap-1.5 border-b border-border px-3 py-1.5">
+      {/*
+        Chat column: header (shrink-0) + scroll messages (flex-1 min-h-0) + input (shrink-0).
+        Secondary panes live in their own scroll region — never stacked on chat input.
+      */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-3 py-1.5">
           <MessageSquare size={12} className="text-muted-foreground" />
           <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             Conversation
           </span>
         </div>
-        <div className="min-h-0 flex-1 px-2.5 py-2 md:px-3">
+        <div className="min-h-0 flex-1 overflow-hidden px-2.5 py-2 md:px-3">
           <ChatWindow />
         </div>
-        <div className="space-y-2 border-t border-border px-2.5 py-2.5 md:px-3">
+        <div className="shrink-0 space-y-2 border-t border-border bg-surface px-2.5 py-2.5 md:px-3">
           <ChatInput />
           <UploadDropzone />
         </div>
       </div>
 
-      {/* Secondary panes */}
-      <div className="max-h-[38%] shrink-0 overflow-y-auto border-t border-border scrollbar-thin">
+      {/* Secondary panes — independent scroll, capped height, never overlays chat */}
+      <div className="max-h-[32%] min-h-0 shrink-0 overflow-y-auto border-t border-border scrollbar-thin">
         <div className="space-y-3 p-3">
           <section>
             <div className="section-title mb-2 text-xs">
               <Lightbulb size={13} className="text-warning" />
               Suggestions
             </div>
-            <SuggestionsPanel suggestions={displaySuggestions} />
+            <SuggestionsPanel suggestions={loading ? [] : displaySuggestions} />
           </section>
 
           <section>
@@ -111,7 +114,7 @@ export default function AiCopilotPanel({
               <BrainIcon />
               Reasoning
             </div>
-            {displayHypotheses?.length ? (
+            {!loading && displayHypotheses?.length ? (
               <ul className="space-y-1.5">
                 {displayHypotheses.slice(0, 4).map((h, i) => (
                   <li
@@ -124,7 +127,9 @@ export default function AiCopilotPanel({
               </ul>
             ) : (
               <p className="text-[11px] text-muted-foreground">
-                Model reasoning and hypotheses appear after analysis.
+                {loading
+                  ? "Waiting for analysis…"
+                  : "Model reasoning and hypotheses appear after analysis."}
               </p>
             )}
           </section>
