@@ -42,6 +42,12 @@ except Exception as _mw_exc:
     pass
 
 app.include_router(sessions_router)
+try:
+    from backend.production.observability_router import router as observability_router
+
+    app.include_router(observability_router)
+except Exception as _obs_exc:
+    pass
 graph = build_graph()
 logger = get_logger(__name__)
 
@@ -686,6 +692,9 @@ def metrics_timings(user: AuthUser = Depends(get_current_user)):
     )
 
 
+# Note: GET /metrics, /health, /performance are registered via observability_router
+
+
 @app.get("/v1/ask")
 @app.get("/ask")
 def ask(
@@ -801,6 +810,7 @@ def ask(
                     saved_ms = None
 
             # Cached body already sanitized at store time — avoid deep re-walk
+            ser_t0 = _time.perf_counter()
             response = dict(cached_body)
             response.pop("_cold_ms", None)
             response.pop("_sanitized", None)
@@ -821,9 +831,14 @@ def ask(
                 "saved_time_ms": response["saved_time_ms"],
                 "stats": ask_cache.stats(),
             }
+            ser_ms = (_time.perf_counter() - ser_t0) * 1000
+            record_stage_ms("serialization", ser_ms)
+            record_stage_ms("response", max(0.0, elapsed_ms - lookup_ms))
+
             timings = timer.as_dict()
             timings["total"] = int(round(elapsed_ms))
             timings["cache"] = int(round(lookup_ms))
+            timings["serialization"] = int(round(ser_ms))
             for k in (
                 "planner",
                 "retrieval",
@@ -840,6 +855,19 @@ def ask(
             if turn:
                 response["message_id"] = turn.get("message_id")
                 response["artifact_ids"] = turn.get("artifact_ids") or []
+            # Observability labels for metrics store
+            timer.cache_hit = True
+            timer.success = True
+            timer.route = "/v1/ask"
+            timer.status_code = 200
+            timer.chart_type = (
+                response.get("last_chart_type")
+                or (response.get("chart_spec") or {}).get("chart_type")
+            )
+            timer.forecast_model = (
+                response.get("forecast_model")
+                or (response.get("forecast_meta") or {}).get("model")
+            )
             logger.info(
                 "Ask completed from cache",
                 extra={
@@ -1004,7 +1032,10 @@ def ask(
                     extra={"session_id": session_id, "error": str(fin_exc)},
                 )
 
-            response = _stable_response(result, question=question)
+            ser_t0 = _time.perf_counter()
+            with time_stage("serialization"):
+                response = _stable_response(result, question=question)
+            ser_ms = (_time.perf_counter() - ser_t0) * 1000
             if isinstance(response, dict):
                 response["session_id"] = session_id
                 response["user_id"] = user_id
@@ -1072,9 +1103,57 @@ def ask(
                     )
 
                 # Ensure timings always present with wall total
+                resp_t0 = _time.perf_counter()
                 timings = response.get("timings") or timer.as_dict()
-                timings["total"] = int(round((_time.perf_counter() - ask_t0) * 1000))
+                wall_ms = (_time.perf_counter() - ask_t0) * 1000
+                timings["total"] = int(round(wall_ms))
+                timings["serialization"] = int(
+                    round(timings.get("serialization") or ser_ms)
+                )
+                # Response stage ≈ remaining assembly after serialization start
+                record_stage_ms("response", (_time.perf_counter() - resp_t0) * 1000 + 0.1)
+                timings["response"] = int(
+                    round(timer.stages.get("response") or 0)
+                ) or timings.get("response", 0)
                 response["timings"] = timings
+
+                # Observability: labels for SQLite sample on pipeline_timer exit
+                timer.cache_hit = False
+                timer.success = True
+                timer.route = "/v1/ask"
+                timer.status_code = 200
+                timer.chart_type = (
+                    result.get("last_chart_type")
+                    or response.get("last_chart_type")
+                    or (result.get("chart_spec") or {}).get("chart_type")
+                )
+                timer.forecast_model = (
+                    result.get("forecast_model")
+                    or (result.get("forecast_meta") or {}).get("model")
+                    or (result.get("forecast_result") or {}).get("model")
+                )
+                # Provider latency from open-data / orchestrator metrics if present
+                orch = (
+                    (result.get("metadata") or {}).get("orchestrator")
+                    or (result.get("retrieval_metrics") or {})
+                    or {}
+                )
+                prov_lat = (
+                    orch.get("metrics", {}).get("provider_latency_ms")
+                    if isinstance(orch.get("metrics"), dict)
+                    else None
+                ) or result.get("provider_latency_ms")
+                if isinstance(prov_lat, dict):
+                    for pname, pms in prov_lat.items():
+                        try:
+                            timer.record_provider_latency(str(pname), float(pms))
+                        except Exception:
+                            pass
+                elif result.get("provider") or result.get("dataset_provider"):
+                    timer.provider = result.get("provider") or result.get(
+                        "dataset_provider"
+                    )
+
                 logger.info(
                     "Ask completed",
                     extra={
