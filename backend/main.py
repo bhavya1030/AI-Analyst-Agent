@@ -753,11 +753,29 @@ def ask(
         with time_stage("session"):
             session = get_session(session_id)
 
+        # Detect topic switch early so we never hit cache/fingerprint for the *old* dataset
+        topic_switch = False
+        if session is not None and not normalized_file_path:
+            try:
+                from backend.memory.continuity import is_new_dataset_topic
+
+                topic_switch = is_new_dataset_topic(
+                    question,
+                    getattr(session, "dataset_topic", None),
+                    has_active_dataset=bool(
+                        getattr(session, "dataset_path", None)
+                        or getattr(session, "dataset_url", None)
+                    ),
+                )
+            except Exception:
+                topic_switch = False
+
         # --- Ask-level cache lookup (skip Planner/EDA/Viz/Forecast on hit) ---
         with time_stage("cache"):
             # Prefer session-stored fingerprint (no file re-hash)
+            # NEVER reuse session fingerprint when the user switched topics (e.g. gold after GDP)
             cache_fp = None
-            if session is not None:
+            if session is not None and not topic_switch:
                 try:
                     from backend.memory.hierarchy_store import load_session_memory_blob
 
@@ -770,8 +788,16 @@ def ask(
                     file_path=normalized_file_path
                     if normalized_file_path and not _is_remote_reference(normalized_file_path)
                     else None,
-                    dataset_path=getattr(session, "dataset_path", None) if session else None,
-                    dataset_url=getattr(session, "dataset_url", None) if session else None,
+                    dataset_path=(
+                        None
+                        if topic_switch
+                        else (getattr(session, "dataset_path", None) if session else None)
+                    ),
+                    dataset_url=(
+                        None
+                        if topic_switch
+                        else (getattr(session, "dataset_url", None) if session else None)
+                    ),
                 )
             # Skip expensive registry match_topic on warm path — only if still no fp
             # and no session binding (rare cold open-world case without file)
