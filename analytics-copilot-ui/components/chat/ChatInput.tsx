@@ -6,51 +6,7 @@ import { askQuestion } from "@/services/api";
 import { useChatStore } from "@/store/chatStore";
 import { useUiStore } from "@/store/uiStore";
 import { ChatMessage } from "@/types";
-
-/** True when the prompt looks like open-world discovery (not "use this file"). */
-function prefersOpenDataDiscovery(text: string): boolean {
-  const lower = text.trim().toLowerCase();
-  if (!lower) return false;
-  if (/(upload|this file|my file|\.csv|\.xlsx|this dataset)/.test(lower)) {
-    return false;
-  }
-  const hasAnalyzeVerb =
-    /analyze|analyse|study|explore|forecast|predict|dataset about|data on|find data/.test(
-      lower
-    );
-  const hasSubject =
-    /(gold|silver|oil|bitcoin|gdp|population|inflation|covid|climate|stock|unemployment|rainfall|co2|emission|temperature|sales|salary|employee)/.test(
-      lower
-    );
-  return hasAnalyzeVerb && hasSubject;
-}
-
-/** Heuristic: prompt names a different subject than the bound dataset label. */
-function isTopicSwitch(text: string, datasetName: string, filePath: string): boolean {
-  if (!filePath && !datasetName) return false;
-  const lower = text.trim().toLowerCase();
-  const bound = `${datasetName} ${filePath}`.toLowerCase();
-  // Common subjects
-  const subjects = [
-    "gold",
-    "oil",
-    "gdp",
-    "population",
-    "inflation",
-    "bitcoin",
-    "rainfall",
-    "co2",
-    "unemployment",
-    "weather",
-    "salary",
-  ];
-  for (const s of subjects) {
-    if (lower.includes(s) && !bound.includes(s) && prefersOpenDataDiscovery(text)) {
-      return true;
-    }
-  }
-  return prefersOpenDataDiscovery(text) && Boolean(filePath);
-}
+import { isTopicSwitch, shouldOmitFilePath } from "@/utils/topicSwitch";
 
 export default function ChatInput() {
   const [prompt, setPrompt] = useState("");
@@ -104,10 +60,27 @@ export default function ChatInput() {
         // Snapshot binding after session ensure (may have updated ids)
         const snap = useChatStore.getState();
         const topicSwitch = isTopicSwitch(trimmed, snap.datasetName, snap.filePath);
-        const openDiscovery = prefersOpenDataDiscovery(trimmed) || topicSwitch;
-        // Never send a stale file when the user is asking about a new open-data topic
-        const pathForRequest =
-          openDiscovery || topicSwitch ? undefined : snap.filePath || undefined;
+        // Never send a stale upload when the user changes subject (GDP → IPL)
+        const pathForRequest = shouldOmitFilePath(
+          trimmed,
+          snap.datasetName,
+          snap.filePath
+        )
+          ? undefined
+          : snap.filePath || undefined;
+
+        if (topicSwitch) {
+          // Immediate UI: clear working set binding before response returns
+          useChatStore.getState().clearDataset();
+          if (typeof console !== "undefined") {
+            // eslint-disable-next-line no-console
+            console.info("[topic-switch] cleared file_path", {
+              prompt: trimmed,
+              previousDataset: snap.datasetName,
+              previousPath: snap.filePath,
+            });
+          }
+        }
 
         const payload = await askQuestion(
           trimmed,
@@ -172,8 +145,8 @@ export default function ChatInput() {
         const accepted = completeAnalysis(requestId, assistantMessage, {
           datasetName: nextTopic,
           filePath: nextPath,
-          // Clear stale upload when we switched to open-data discovery
-          clearFilePath: Boolean(openDiscovery || topicSwitch) && !nextPath,
+          // Clear stale upload when we switched topics and response has no new path
+          clearFilePath: Boolean(topicSwitch) && !nextPath,
         });
 
         if (!accepted) return;

@@ -188,7 +188,7 @@ export const useChatStore = create<ChatStore>()(
           analysisSeq: state.analysisSeq + 1,
           bootstrapping: false,
           // Canvas projection clears immediately — chat history stays.
-          // Prevents previous India GDP charts/insights from lingering while Gold loads.
+          // Prevents previous India GDP charts/insights from lingering while IPL loads.
           charts: [],
           forecast: null,
           suggestions: [],
