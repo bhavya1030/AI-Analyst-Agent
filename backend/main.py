@@ -988,6 +988,22 @@ def ask(
             with time_stage("session"):
                 ckpt = _save_turn_checkpoint(session_id, result)
 
+            # Session Reliability v2: never respond until session+memory are readable
+            try:
+                from backend.sessions.transactions import finalize_session_write
+
+                with time_stage("session"):
+                    finalize_session_write(
+                        session_id,
+                        user_id=user_id,
+                        expect_messages=bool(turn),
+                    )
+            except Exception as fin_exc:
+                logger.warning(
+                    "Session finalize barrier soft-failed",
+                    extra={"session_id": session_id, "error": str(fin_exc)},
+                )
+
             response = _stable_response(result, question=question)
             if isinstance(response, dict):
                 response["session_id"] = session_id
