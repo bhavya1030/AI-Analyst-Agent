@@ -40,7 +40,11 @@ export default function AnalysisCanvas() {
   const setAnalysisTab = useUiStore((s) => s.setAnalysisTab);
   const workspaceId = useUiStore((s) => s.workspaceId);
 
+  // While a request is in flight, canvas projection is cleared (activeAssistantId null).
+  // Never fall back to an older assistant message during loading — that caused India GDP
+  // to remain visible while Gold was analyzing.
   const active = useMemo(() => {
+    if (loading) return null;
     if (activeAssistantId) {
       return (
         messages.find((m) => m.id === activeAssistantId && m.role === "assistant") ||
@@ -49,20 +53,28 @@ export default function AnalysisCanvas() {
     }
     const assistants = messages.filter((m) => m.role === "assistant");
     return assistants[assistants.length - 1] || null;
-  }, [messages, activeAssistantId]);
+  }, [messages, activeAssistantId, loading]);
 
-  const displayCharts = active?.charts?.length ? active.charts : charts;
-  const displayForecast = active?.forecast || forecast;
-  const displayHypotheses = active?.hypotheses?.length
-    ? active.hypotheses
-    : hypotheses;
-  const displaySuggestions = active?.suggestions?.length
-    ? active.suggestions
-    : suggestions;
-  const answer = active?.text || "";
-  const discovery = active?.discovery;
-  const related = active?.relatedDatasets || [];
-  const source = active?.source || "";
+  const displayCharts = loading
+    ? []
+    : active?.charts?.length
+      ? active.charts
+      : charts;
+  const displayForecast = loading ? null : active?.forecast || forecast;
+  const displayHypotheses = loading
+    ? []
+    : active?.hypotheses?.length
+      ? active.hypotheses
+      : hypotheses;
+  const displaySuggestions = loading
+    ? []
+    : active?.suggestions?.length
+      ? active.suggestions
+      : suggestions;
+  const answer = loading ? "" : active?.text || "";
+  const discovery = loading ? null : active?.discovery;
+  const related = loading ? [] : active?.relatedDatasets || [];
+  const source = loading ? "" : active?.source || "";
 
   const tableRows = useMemo(() => {
     const values = displayForecast?.values || [];
@@ -71,10 +83,11 @@ export default function AnalysisCanvas() {
   }, [displayForecast]);
 
   const hasContent =
-    Boolean(answer) ||
-    Boolean(displayCharts?.length) ||
-    Boolean(displayForecast) ||
-    Boolean(displayHypotheses?.length);
+    !loading &&
+    (Boolean(answer) ||
+      Boolean(displayCharts?.length) ||
+      Boolean(displayForecast) ||
+      Boolean(displayHypotheses?.length));
 
   return (
     <section className="surface flex h-full min-h-0 flex-col overflow-hidden animate-fade-in">
@@ -122,12 +135,15 @@ export default function AnalysisCanvas() {
         })}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-3 scrollbar-thin md:p-4">
-        {loading && !hasContent ? (
-          <div className="grid gap-3 sm:grid-cols-2">
+      <div className="relative min-h-0 flex-1 overflow-y-auto p-3 scrollbar-thin md:p-4">
+        {loading ? (
+          <div className="grid gap-3 sm:grid-cols-2 animate-fade-in" data-testid="canvas-loading">
             <div className="skeleton h-40" />
             <div className="skeleton h-40" />
             <div className="skeleton h-28 sm:col-span-2" />
+            <p className="sm:col-span-2 text-center text-xs text-muted-foreground">
+              Building fresh analysis… previous results are cleared until this finishes.
+            </p>
           </div>
         ) : null}
 
