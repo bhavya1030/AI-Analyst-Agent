@@ -42,10 +42,10 @@ class OpenDataProvider(RetrievalProvider):
                     "failure_reason": result.failure_reason,
                     "retry_count": result.retry_count,
                     "providers_tried": result.providers_tried,
+                    "graceful_message": result.graceful_message,
                 },
             )
-            # Return None so agent can fall through; if this is last provider,
-            # agent emits SEARCH_REQUIRED.
+            # Miss: agent falls through; graceful text is in logs / orchestrator result
             return None
 
         cand = result.candidate
@@ -55,17 +55,34 @@ class OpenDataProvider(RetrievalProvider):
             "retry_count": result.retry_count,
             "total_ms": result.total_ms,
             "validation": result.validation,
-            "attempts": result.attempts[-8:],  # tail for debug
+            "attempts": result.attempts[-8:],
+            "country": result.country,
+            "metric": result.metric,
+            "domain": result.domain,
         }
+        # Provenance contract: provider, version, download date, license, hash
+        prov = result.provenance or {}
         meta["download_url"] = cand.download_url
         meta["source_url"] = cand.source_url or cand.download_url
         meta["provider"] = cand.provider
-        meta["license"] = cand.license
-        meta["dataset_version"] = cand.dataset_version
+        meta["license"] = cand.license or prov.get("license")
+        meta["dataset_version"] = cand.dataset_version or prov.get("version")
+        meta["download_date"] = prov.get("download_date") or meta.get("download_date")
+        meta["download_timestamp"] = prov.get("download_timestamp") or meta.get(
+            "download_timestamp"
+        )
+        meta["hash"] = prov.get("hash") or prov.get("content_hash")
+        meta["content_hash"] = meta["hash"]
+        meta["confidence"] = cand.confidence
+        meta["country"] = cand.country or result.country
+        meta["metric"] = cand.metric or result.metric
+        meta["time_period"] = cand.time_period or result.time_period
+        meta["provenance"] = prov
 
         status = (
             RetrievalStatus.API_HIT
-            if cand.provider in {"world_bank", "json_api", "owid"}
+            if cand.provider
+            in {"world_bank", "json_api", "owid", "fred", "eurostat"}
             else RetrievalStatus.INTERNET_HIT
         )
 
@@ -75,8 +92,10 @@ class OpenDataProvider(RetrievalProvider):
                 "topic": topic,
                 "provider": cand.provider,
                 "url": cand.download_url,
+                "confidence": cand.confidence,
                 "retry_count": result.retry_count,
                 "total_ms": result.total_ms,
+                "hash": meta.get("hash"),
             },
         )
         return ProviderHit(
@@ -87,7 +106,7 @@ class OpenDataProvider(RetrievalProvider):
             metadata=meta,
             reason=(
                 f"Validated open-data match via provider '{cand.provider}' "
-                f"after {result.retry_count} retries."
+                f"(confidence={cand.confidence:.2f}, retries={result.retry_count})."
             ),
             provider_name=f"{self.name}:{cand.provider}",
         )
