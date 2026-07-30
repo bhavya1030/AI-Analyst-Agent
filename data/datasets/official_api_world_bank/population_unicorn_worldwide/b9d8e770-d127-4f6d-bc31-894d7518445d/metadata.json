@@ -1,0 +1,11 @@
+{
+  "dataset_id": "b9d8e770-d127-4f6d-bc31-894d7518445d",
+  "checksum": "7d2dd6a17f5ed7916de1f89a9c116791e64d207f2e2f6ce47c57e1ab46f0088a",
+  "download_time": "2026-07-29T19:31:23+00:00",
+  "source": "official_api:World Bank",
+  "file_format": "csv",
+  "version": "1",
+  "relative_dir": "official_api_world_bank/population_unicorn_worldwide/b9d8e770-d127-4f6d-bc31-894d7518445d",
+  "data_filename": "dataset.csv",
+  "topic": "population unicorn worldwide"
+}

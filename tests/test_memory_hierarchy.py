@@ -22,7 +22,7 @@ def test_load_inject_persist_roundtrip():
     uid = f"u-{uuid.uuid4().hex[:6]}"
 
     svc.create_session(session_id=sid, title="GDP memory test", user_id=uid)
-    svc.append_user_message(sid, "Analyze India GDP")
+    svc.append_user_message(sid, "Analyze India GDP", user_id=uid)
     svc.record_assistant_turn(
         sid,
         question="Analyze India GDP",
@@ -43,6 +43,7 @@ def test_load_inject_persist_roundtrip():
             "rows": 20,
             "columns": ["Year", "Value"],
         },
+        user_id=uid,
     )
 
     bundle = mem.load(

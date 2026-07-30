@@ -15,11 +15,20 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///memory.db"
     DATA_DIR: Path = BASE_DIR / "data"
     FORECAST_HORIZON: int = 10
+    # Wall-clock budget for the entire forecast pipeline (train+predict+chart).
+    # Keep well below typical HTTP client timeouts (90–120s).
+    FORECAST_TIMEOUT_SECONDS: float = 10.0
+    # When True and budget allows, Prophet may be selected for daily seasonal series.
+    FORECAST_ALLOW_PROPHET: bool = False
     EMBEDDING_MODEL_NAME: str = "sentence-transformers/all-MiniLM-L6-v2"
     SIMILARITY_THRESHOLD: int = 55
     # Semantic retrieval (cosine / IP on normalized embeddings, 0–1)
     SEMANTIC_SEARCH_TOP_K: int = 5
-    SEMANTIC_MIN_SCORE: float = 0.35
+    # Raised from 0.35 — low floor caused Olympics/Atlantis false semantic hits
+    SEMANTIC_MIN_SCORE: float = 0.55
+    # Multi-signal registry match threshold (0–1)
+    REGISTRY_MIN_CONFIDENCE: float = 0.62
+    REGISTRY_SEMANTIC_FLOOR: float = 0.45
     CHART_DEFAULT_LIMIT: int = 4
     OLLAMA_MODEL: str = "qwen3:4b"
     OLLAMA_SERVER_URL: str = "http://localhost:11434"
@@ -30,6 +39,8 @@ class Settings(BaseSettings):
     # Topic extraction via Ollama only when rule-based topic is weak/empty.
     # Keep False for snappy UX; set True if you want freer natural-language topics.
     USE_LLM_TOPIC: bool = False
+    # Optional LLM refinement of auto-generated dataset titles/descriptions.
+    USE_LLM_METADATA: bool = False
     # Persist successful topic→dataset mappings (product memory, not weight training).
     LEARN_DATASETS: bool = True
     # Use Ollama to expand aliases when learning a new dataset topic (can be slow).
@@ -97,7 +108,11 @@ class Settings(BaseSettings):
     DATASET_SOURCES: dict[str, str] = {
         "gdp": "https://raw.githubusercontent.com/datasets/gdp/master/data/gdp.csv",
         "population": "https://raw.githubusercontent.com/datasets/population/master/data/population.csv",
-        "inflation": "https://raw.githubusercontent.com/datasets/inflation/master/data/cpi.csv",
+        # Direct World Bank indicator JSON (old GitHub cpi.csv path is 404)
+        "inflation": (
+            "https://api.worldbank.org/v2/country/all/indicator/FP.CPI.TOTL.ZG"
+            "?format=json&per_page=20000"
+        ),
     }
     MODEL_ROUTING_DEFAULTS: dict[str, Any] = {
         "default_plan": [

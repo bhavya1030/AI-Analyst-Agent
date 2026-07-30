@@ -271,6 +271,30 @@ class DatasetLearningService:
             else (incoming.dataset_id or new_dataset_id())
         )
 
+        keywords = list(incoming.topic_keywords or [])
+        if existing and getattr(existing, "keywords", None):
+            for k in existing.keywords or []:
+                if k not in keywords:
+                    keywords.append(k)
+        countries = list(incoming.countries_regions or [])
+        if existing and getattr(existing, "country", None):
+            for c in existing.country or []:
+                if c not in countries:
+                    countries.append(c)
+        metrics: list[str] = list(getattr(incoming, "metrics", None) or [])
+        if existing and getattr(existing, "metrics", None):
+            for m in existing.metrics or []:
+                if m not in metrics:
+                    metrics.append(m)
+        domain = (
+            incoming.domain
+            or (getattr(existing, "domain", None) if existing else None)
+            or "general"
+        )
+        fingerprint = checksum or (
+            getattr(existing, "fingerprint", None) if existing else None
+        )
+
         return DatasetMetadata(
             dataset_id=dataset_id,
             title=title,
@@ -282,7 +306,11 @@ class DatasetLearningService:
             local_path=local_path,
             file_format=file_format or "unknown",
             tags=tags,
+            keywords=keywords,
             columns=columns,
+            domain=domain,
+            country=countries,
+            metrics=metrics,
             row_count=row_count,
             date_range=date_range,
             summary=summary,
@@ -291,6 +319,7 @@ class DatasetLearningService:
             last_updated=now,
             usage_count=usage_count,
             checksum=checksum,
+            fingerprint=fingerprint,
             embedding_ref=incoming.embedding_ref or (existing.embedding_ref if existing else None),
             is_active=True,
         )
@@ -334,6 +363,7 @@ class DatasetLearningService:
         topic = (
             r.get("topic")
             or r_meta.get("topic")
+            or r_meta.get("title")
             or p.get("topic")
             or ""
         )
@@ -343,14 +373,28 @@ class DatasetLearningService:
             or topic
             or "Untitled dataset"
         )
+        # Avoid persisting generic upload placeholders as registry titles
+        _placeholders = {
+            "user provided dataset",
+            "user provided url",
+            "general dataset",
+            "active session dataset",
+            "untitled dataset",
+            "dataset",
+        }
+        if str(title).strip().lower() in _placeholders:
+            title = r_meta.get("title") or topic if str(topic).strip().lower() not in _placeholders else title
+        if str(topic).strip().lower() in _placeholders and r_meta.get("title"):
+            topic = str(r_meta.get("title"))
         source = (
-            r_meta.get("source")
+            r_meta.get("provider")
+            or r_meta.get("source")
             or r.get("provider")
             or a.get("provider")
             or ""
         )
         source_type = r_meta.get("source_type") or _source_type_from_provider(
-            r.get("provider") or a.get("provider")
+            r.get("provider") or a.get("provider") or r_meta.get("provider")
         )
 
         download_url = (
@@ -379,6 +423,17 @@ class DatasetLearningService:
         )
 
         tags = list(r_meta.get("tags") or [])
+        # Provenance tags for multi-provider retrieval
+        for key, prefix in (
+            ("provider", "provider:"),
+            ("license", "license:"),
+            ("dataset_version", "version:"),
+        ):
+            val = r_meta.get(key)
+            if val:
+                label = f"{prefix}{val}"
+                if label not in tags and str(val) not in tags:
+                    tags.append(label)
         columns = list(p.get("column_names") or r_meta.get("columns") or [])
         row_count = p.get("row_count")
         if row_count is None and a.get("dataset_size") is not None:
@@ -387,6 +442,68 @@ class DatasetLearningService:
         date_range = p.get("date_range")
         description = r_meta.get("description") or ""
         summary = r_meta.get("summary") or ""
+        # Persist download provenance in summary for operators / audit
+        provenance_bits = []
+        if r_meta.get("provider") or source:
+            provenance_bits.append(f"provider={r_meta.get('provider') or source}")
+        if r_meta.get("license"):
+            provenance_bits.append(f"license={r_meta.get('license')}")
+        if r_meta.get("dataset_version"):
+            provenance_bits.append(f"version={r_meta.get('dataset_version')}")
+        src_url = r_meta.get("source_url") or download_url
+        if src_url:
+            provenance_bits.append(f"source_url={src_url}")
+        if r_meta.get("download_timestamp"):
+            provenance_bits.append(f"downloaded_at={r_meta.get('download_timestamp')}")
+        if provenance_bits:
+            line = "Provenance: " + "; ".join(provenance_bits)
+            summary = f"{summary}\n{line}".strip() if summary else line
+
+        # Domain / keywords for high-confidence registry matching
+        try:
+            from backend.registry.matching import infer_domain, tokenize
+        except Exception:
+            infer_domain = None
+            tokenize = None
+
+        domain = str(
+            r_meta.get("domain")
+            or p.get("domain")
+            or (infer_domain(f"{topic} {title}", tags=tags) if infer_domain else "general")
+            or "general"
+        )
+        topic_keywords = list(p.get("topic_keywords") or r_meta.get("keywords") or [])
+        if not topic_keywords and tokenize:
+            topic_keywords = tokenize(f"{topic} {title} {description}")
+        countries = list(
+            p.get("countries_regions")
+            or r_meta.get("country")
+            or r_meta.get("countries")
+            or []
+        )
+        metrics = list(
+            r_meta.get("metrics")
+            or p.get("numeric_metrics")
+            or p.get("metrics")
+            or []
+        )
+        if not metrics and columns:
+            # Heuristic: numeric-looking column names as metrics
+            for c in columns:
+                cl = str(c).lower()
+                if any(
+                    k in cl
+                    for k in (
+                        "gdp", "value", "price", "rate", "count", "population",
+                        "co2", "emission", "inflation", "score", "index",
+                    )
+                ):
+                    metrics.append(str(c))
+
+        # Prefer rich tags from generated metadata
+        for t in r_meta.get("tags") or []:
+            if t and t not in tags:
+                tags.append(t)
 
         return LearningInput(
             dataset_id=dataset_id,
@@ -404,11 +521,14 @@ class DatasetLearningService:
             date_range=date_range if isinstance(date_range, dict) else None,
             summary=str(summary or ""),
             checksum=checksum,
-            domain=str(p.get("domain") or "general"),
-            time_column=p.get("time_column"),
-            entity_column=p.get("entity_column"),
-            countries_regions=list(p.get("countries_regions") or []),
-            topic_keywords=list(p.get("topic_keywords") or []),
+            domain=domain,
+            time_column=p.get("time_column") or r_meta.get("time_column"),
+            entity_column=p.get("entity_column")
+            or r_meta.get("entity_column")
+            or r_meta.get("primary_entity"),
+            countries_regions=countries,
+            topic_keywords=topic_keywords,
+            metrics=[str(m) for m in metrics],
             dataset_type=str(p.get("dataset_type") or "unknown"),
         )
 

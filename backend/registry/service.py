@@ -122,7 +122,44 @@ class DatasetRegistryService:
         return saved
 
     def get_by_topic(self, topic: str, *, limit: int = 20) -> list[DatasetMetadata]:
+        """Raw candidate recall (may include weak partials). Prefer match_topic()."""
         return self._repo.get_by_topic(topic, limit=limit)
+
+    def match_topic(
+        self,
+        topic: str,
+        *,
+        question: str | None = None,
+        intent: str | None = None,
+        limit: int = 5,
+        min_confidence: float | None = None,
+        semantic_scores: dict[str, float] | None = None,
+    ) -> list:
+        """
+        High-confidence registry matches with explanations.
+
+        Returns list[MatchScore] (accepted only). Empty → caller should
+        perform internet / open-data retrieval instead of REGISTRY_HIT.
+        """
+        from backend.registry.matching import DEFAULT_MIN_CONFIDENCE, match_registry
+
+        candidates = self._repo.get_by_topic(topic, limit=max(limit * 5, 20))
+        # Also consider a broader active list when candidate recall is empty
+        if not candidates:
+            candidates = self._repo.list_all(limit=50, active_only=True)
+        return match_registry(
+            topic,
+            candidates,
+            question=question,
+            intent=intent,
+            semantic_scores=semantic_scores,
+            min_confidence=(
+                min_confidence
+                if min_confidence is not None
+                else DEFAULT_MIN_CONFIDENCE
+            ),
+            limit=limit,
+        )
 
     def get_by_dataset_id(self, dataset_id: str) -> Optional[DatasetMetadata]:
         if not dataset_id:
@@ -188,6 +225,25 @@ def update_dataset(metadata: dict[str, Any] | DatasetMetadata) -> DatasetMetadat
 
 def get_by_topic(topic: str, *, limit: int = 20) -> list[DatasetMetadata]:
     return DatasetRegistryService().get_by_topic(topic, limit=limit)
+
+
+def match_topic(
+    topic: str,
+    *,
+    question: str | None = None,
+    intent: str | None = None,
+    limit: int = 5,
+    min_confidence: float | None = None,
+    semantic_scores: dict[str, float] | None = None,
+) -> list:
+    return DatasetRegistryService().match_topic(
+        topic,
+        question=question,
+        intent=intent,
+        limit=limit,
+        min_confidence=min_confidence,
+        semantic_scores=semantic_scores,
+    )
 
 
 def get_by_dataset_id(dataset_id: str) -> Optional[DatasetMetadata]:

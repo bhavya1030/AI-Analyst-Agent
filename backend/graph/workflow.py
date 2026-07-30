@@ -95,13 +95,17 @@ if invalid_route_entries:
 
 
 def _wrap_agent(node_name, agent):
+    from backend.production.pipeline_timing import wrap_agent_with_timing
+
+    timed_agent = wrap_agent_with_timing(node_name, agent)
+
     def _runner(state):
         plan = list(state.get("plan") or [])
 
         if plan and plan[0] == node_name:
             state["plan"] = plan[1:]
 
-        return agent(state)
+        return timed_agent(state)
 
     return _runner
 
@@ -160,8 +164,13 @@ def build_graph(*, checkpointer=None):
     # REGISTER NODES
     # -------------------------
 
-    builder.add_node("conversation_context", conversation_context_agent)
-    builder.add_node("planner", planner_agent)
+    from backend.production.pipeline_timing import wrap_agent_with_timing
+
+    builder.add_node(
+        "conversation_context",
+        wrap_agent_with_timing("conversation_context", conversation_context_agent),
+    )
+    builder.add_node("planner", wrap_agent_with_timing("planner", planner_agent))
 
     builder.add_node("load_data", _wrap_agent("load_data", data_agent))
     builder.add_node("fetch_data", _wrap_agent("fetch_data", data_engineer_agent))
@@ -225,7 +234,10 @@ def build_graph(*, checkpointer=None):
         _wrap_agent("compare_datasets", comparison_agent),
     )
 
-    builder.add_node("generate_insight", insight_agent)
+    builder.add_node(
+        "generate_insight",
+        wrap_agent_with_timing("generate_insight", insight_agent),
+    )
 
     # -------------------------
     # ENTRY POINT

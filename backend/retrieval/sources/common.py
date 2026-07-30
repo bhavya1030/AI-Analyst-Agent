@@ -33,8 +33,32 @@ def topic_tokens(topic: str) -> list[str]:
 def is_loadable_url(url: str | None) -> bool:
     if not url:
         return False
-    lower = url.lower().split("?")[0]
-    return any(lower.endswith(ext) or ext in lower for ext in LOADABLE_EXTENSIONS)
+    lower_full = url.lower()
+    # Never treat HTML search / wiki / login pages as loadable datasets
+    if any(
+        bad in lower_full
+        for bad in (
+            "/searchresults",
+            "wikipedia.org",
+            "/login",
+            "/signin",
+            "/w/index.php",
+        )
+    ):
+        return False
+    lower = lower_full.split("?")[0]
+    if any(lower.endswith(ext) for ext in LOADABLE_EXTENSIONS):
+        return True
+    # Structured JSON APIs that return datasets (not HTML)
+    if "api.worldbank.org" in lower_full and "format=json" in lower_full:
+        return True
+    if "api.coingecko.com" in lower_full:
+        return True
+    if "raw.githubusercontent.com" in lower_full:
+        return True
+    if "/sdmx-json/data/" in lower_full:
+        return True
+    return False
 
 
 def guess_format(url: str | None) -> str:

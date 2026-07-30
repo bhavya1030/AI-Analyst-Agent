@@ -9,6 +9,14 @@ from backend.registry.exceptions import (
     DatasetValidationError,
     RegistryError,
 )
+from backend.registry.matching import (
+    MatchQuery,
+    MatchScore,
+    best_match,
+    build_match_query,
+    match_registry,
+    score_dataset,
+)
 from backend.registry.models import DatasetMetadata, new_dataset_id
 from backend.registry.repository import (
     DatasetRegistryRepository,
@@ -24,6 +32,7 @@ from backend.registry.service import (
     increment_usage,
     insert_dataset,
     list_datasets,
+    match_topic,
     set_default_repository,
     update_dataset,
     update_last_used,
@@ -47,9 +56,16 @@ __all__ = [
     "insert_dataset",
     "update_dataset",
     "get_by_topic",
+    "match_topic",
     "get_by_dataset_id",
     "list_datasets",
     "increment_usage",
     "update_last_used",
     "delete_dataset",
+    "MatchQuery",
+    "MatchScore",
+    "build_match_query",
+    "score_dataset",
+    "match_registry",
+    "best_match",
 ]

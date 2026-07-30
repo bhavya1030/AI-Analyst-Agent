@@ -21,9 +21,12 @@ WORLD_BANK_RAW = {
         "tags": ["population", "demographics"],
     },
     "inflation": {
-        "title": "Global CPI / Inflation",
-        "url": "https://raw.githubusercontent.com/datasets/inflation/master/data/cpi.csv",
-        "description": "Consumer price inflation series.",
+        "title": "Global CPI / Inflation (World Bank API)",
+        "url": (
+            "https://api.worldbank.org/v2/country/all/indicator/FP.CPI.TOTL.ZG"
+            "?format=json&per_page=20000"
+        ),
+        "description": "Consumer price inflation series from World Bank indicators.",
         "tags": ["inflation", "cpi"],
     },
 }

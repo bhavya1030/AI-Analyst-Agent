@@ -1,0 +1,11 @@
+{
+  "dataset_id": "f384271c-32c4-4e7b-9bea-da4ae5804cab",
+  "checksum": "5b0b88645276c34bd6937434206766eb8cc90c15209831aa4b2fdc65ca96aca4",
+  "download_time": "2026-07-29T19:32:14+00:00",
+  "source": "internet_search:Wikipedia",
+  "file_format": "csv",
+  "version": "1",
+  "relative_dir": "internet_search_wikipedia/analyze_the_dataset/f384271c-32c4-4e7b-9bea-da4ae5804cab",
+  "data_filename": "dataset.csv",
+  "topic": "analyze the dataset"
+}

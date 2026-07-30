@@ -107,8 +107,59 @@ class SemanticProvider(RetrievalProvider):
                 best_below = best_below or (score, registry_id, meta)
                 continue
 
+            # Multi-signal confidence gate — embedding alone is not enough
+            from backend.registry.matching import (
+                DEFAULT_MIN_CONFIDENCE,
+                score_dataset,
+                build_match_query,
+            )
+            from backend.registry.models import DatasetMetadata
+
+            try:
+                ds_meta = DatasetMetadata.from_dict(meta)
+            except Exception:
+                ds_meta = None
+
+            if ds_meta is not None:
+                match = score_dataset(
+                    build_match_query(topic, question=request.question),
+                    ds_meta,
+                    semantic_score=score,
+                    min_confidence=float(
+                        getattr(settings, "REGISTRY_MIN_CONFIDENCE", DEFAULT_MIN_CONFIDENCE)
+                    ),
+                )
+                if not match.accepted:
+                    logger.info(
+                        "Semantic embedding hit rejected by confidence scorer",
+                        extra={
+                            "topic": topic,
+                            "registry_id": registry_id,
+                            "semantic": score,
+                            "confidence": match.confidence,
+                            "reason": match.explanation,
+                        },
+                    )
+                    continue
+                confidence = match.confidence
+                explanation = match.explanation
+                components = match.components
+                reasons = match.reasons
+            else:
+                confidence = score
+                explanation = (
+                    f"Semantic match for '{topic}' → registry '{registry_id}' "
+                    f"(score={score:.3f}, threshold={self.min_score})."
+                )
+                components = {"semantic": score}
+                reasons = [explanation]
+
             enriched = dict(meta)
             enriched["similarity_score"] = score
+            enriched["match_confidence"] = confidence
+            enriched["match_explanation"] = explanation
+            enriched["match_reasons"] = reasons
+            enriched["match_components"] = components
             enriched["semantic_candidates"] = [
                 {
                     "registry_id": getattr(h, "registry_id", None)
@@ -128,6 +179,7 @@ class SemanticProvider(RetrievalProvider):
                     "topic": topic,
                     "registry_id": registry_id,
                     "score": score,
+                    "confidence": confidence,
                     "local": bool(file_ok),
                 },
             )
@@ -137,10 +189,7 @@ class SemanticProvider(RetrievalProvider):
                 local_path=local_path if file_ok else meta.get("local_path"),
                 download_url=download_url,
                 metadata=enriched,
-                reason=(
-                    f"Semantic match for '{topic}' → registry '{registry_id}' "
-                    f"(score={score:.3f}, threshold={self.min_score})."
-                ),
+                reason=explanation,
                 provider_name=self.name,
             )
 
@@ -180,11 +229,17 @@ class SemanticProvider(RetrievalProvider):
                             "local_path",
                             "file_format",
                             "tags",
+                            "keywords",
                             "columns",
+                            "domain",
+                            "country",
+                            "metrics",
                             "row_count",
                             "date_range",
                             "summary",
                             "checksum",
+                            "fingerprint",
+                            "embedding_ref",
                         ):
                             if hasattr(row, key):
                                 meta[key] = getattr(row, key)
