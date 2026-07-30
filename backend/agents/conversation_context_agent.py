@@ -14,17 +14,28 @@ FOLLOW_UP_MAPPINGS = {
     "compare with previous chart": "compare {subject} with another variable",
     "compare that": "compare {subject} with another variable",
     "compare this": "compare {subject} with another variable",
-    "show correlation instead": "show correlation heatmap",
+    "show correlation instead": "show correlation heatmap for {subject}",
+    "show correlation": "show correlation heatmap for {subject}",
+    "show histogram": "show histogram of {subject}",
     "forecast instead": "forecast {subject} for next 10 years",
     "forecast that": "forecast {subject} for next 10 years",
     "forecast this": "forecast {subject} for next 10 years",
     "forecast it": "forecast {subject} for next 10 years",
     "predict it": "forecast {subject} for next 10 years",
-    "instead correlation": "show correlation heatmap",
+    "instead correlation": "show correlation heatmap for {subject}",
     "analyze it": "analyze {subject}",
     "visualize it": "visualize trend of {subject}",
     "plot it": "plot trend of {subject}",
     "show it": "show trend of {subject}",
+}
+
+# Exact short follow-ups only (avoid rewriting "forecast gold prices")
+EXACT_FOLLOW_UPS = {
+    "histogram": "show histogram of {subject}",
+    "show histogram": "show histogram of {subject}",
+    "correlation": "show correlation heatmap for {subject}",
+    "forecast": "forecast {subject} for next 10 years",
+    "predict": "forecast {subject} for next 10 years",
 }
 
 AMBIGUOUS_PHRASES = set(FOLLOW_UP_MAPPINGS.keys())
@@ -88,9 +99,28 @@ def conversation_context_agent(state):
     # Preserve session continuity markers for downstream agents.
     if state.get("data") is not None:
         state["has_active_dataset"] = True
+        if not state.get("topic_mismatch"):
+            state["reuse_active_dataset"] = True
+            state["planner_skip_upload"] = True
+            state["needs_user_data"] = False
     if state.get("dataset_url") and not state.get("dataset_topic"):
         state["dataset_topic"] = state.get("dataset_topic") or "active session dataset"
 
+    # Memory v2: bind topic from session_memory when follow-up has no topic
+    try:
+        from backend.memory.continuity import is_follow_up_question
+
+        if is_follow_up_question(question) and not state.get("topic_mismatch"):
+            sm = state.get("session_memory") or {}
+            if isinstance(sm, dict) and sm.get("dataset_topic") and not state.get("dataset_topic"):
+                state["dataset_topic"] = sm.get("dataset_topic")
+            state["reuse_active_dataset"] = bool(
+                state.get("data") is not None
+                or state.get("file_path")
+                or state.get("dataset_url")
+            )
+    except Exception:
+        pass
     # Phase 5: prefer L2 session memory / L3 dataset hints when subject is weak
     session_mem = state.get("session_memory") or {}
     if isinstance(session_mem, dict):
@@ -115,10 +145,19 @@ def conversation_context_agent(state):
 
     resolved = None
 
-    for phrase, template in FOLLOW_UP_MAPPINGS.items():
-        if phrase in lowered:
-            resolved = template.format(subject=subject)
-            break
+    if lowered.strip() in EXACT_FOLLOW_UPS:
+        resolved = EXACT_FOLLOW_UPS[lowered.strip()].format(subject=subject)
+    else:
+        for phrase, template in FOLLOW_UP_MAPPINGS.items():
+            if phrase in lowered:
+                resolved = template.format(subject=subject)
+                break
+
+    # "compare with China" — keep subject dataset, attach entity
+    if resolved is None and re.search(r"\bcompare\s+with\b", lowered):
+        rest = re.sub(r"^.*compare\s+with\s+", "", lowered).strip()
+        if rest and subject not in {"the dataset", "the active dataset"}:
+            resolved = f"compare {subject} with {rest}"
 
     if resolved is None and _is_follow_up(question):
         resolved = _resolve_pronouns(question, subject)

@@ -42,11 +42,15 @@ class ConversationMessage:
 
 @dataclass
 class ConversationMemory:
-    """Level 1 — sliding window of recent chat turns."""
+    """Level 1 — sliding window of recent chat turns + turn anchors."""
 
     messages: list[ConversationMessage] = field(default_factory=list)
     window_size: int = 12
     conversation_summary: str = ""
+    # Memory v2 anchors for continuity
+    current_intent: Optional[str] = None
+    previous_question: Optional[str] = None
+    current_response: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -55,6 +59,9 @@ class ConversationMemory:
             "messages": [m.to_dict() for m in self.messages],
             "window_size": self.window_size,
             "conversation_summary": self.conversation_summary,
+            "current_intent": self.current_intent,
+            "previous_question": self.previous_question,
+            "current_response": self.current_response,
         }
 
     @classmethod
@@ -66,12 +73,15 @@ class ConversationMemory:
             ],
             window_size=int(data.get("window_size") or 12),
             conversation_summary=str(data.get("conversation_summary") or ""),
+            current_intent=data.get("current_intent"),
+            previous_question=data.get("previous_question"),
+            current_response=data.get("current_response"),
         )
 
 
 @dataclass
 class SessionMemory:
-    """Level 2 — active analysis context for this session."""
+    """Level 2 — active analysis context for this session (no live DataFrame)."""
 
     session_id: str = ""
     last_intent: Optional[str] = None
@@ -80,15 +90,23 @@ class SessionMemory:
     last_forecast_target: Optional[str] = None
     last_columns: list[str] = field(default_factory=list)
     last_column: Optional[str] = None
+    selected_columns: list[str] = field(default_factory=list)
     dataset_topic: Optional[str] = None
     dataset_id: Optional[str] = None
     dataset_path: Optional[str] = None
     dataset_url: Optional[str] = None
     dataset_fingerprint: Optional[str] = None
+    dataset_name: Optional[str] = None
     dataset_profile_summary: dict[str, Any] = field(default_factory=dict)
     metrics: list[str] = field(default_factory=list)
     entities: list[str] = field(default_factory=list)
     filters: list[dict[str, Any]] = field(default_factory=list)
+    # Artifact / forecast continuity (JSON-safe refs only)
+    chart_types: list[str] = field(default_factory=list)
+    artifact_ids: list[str] = field(default_factory=list)
+    forecast_model: Optional[str] = None
+    forecast_horizon: Optional[int] = None
+    has_forecast: bool = False
     last_insight: Optional[str] = None
     last_query: Optional[str] = None
     hypotheses: list[str] = field(default_factory=list)
@@ -108,14 +126,21 @@ class SessionMemory:
         data = data or {}
         known = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
         payload = {k: v for k, v in data.items() if k in known}
-        payload.setdefault("last_columns", [])
-        payload.setdefault("metrics", [])
-        payload.setdefault("entities", [])
-        payload.setdefault("filters", [])
-        payload.setdefault("hypotheses", [])
-        payload.setdefault("recommended_next_steps", [])
-        payload.setdefault("detected_patterns", [])
+        for key in (
+            "last_columns",
+            "selected_columns",
+            "metrics",
+            "entities",
+            "filters",
+            "hypotheses",
+            "recommended_next_steps",
+            "detected_patterns",
+            "chart_types",
+            "artifact_ids",
+        ):
+            payload.setdefault(key, [])
         payload.setdefault("dataset_profile_summary", {})
+        payload.setdefault("has_forecast", False)
         return cls(**payload)
 
 
