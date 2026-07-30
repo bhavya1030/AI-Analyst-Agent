@@ -1,46 +1,18 @@
-import hashlib
+"""Visualization agent v2 — inference, validation, safe fallbacks, durable cache."""
 
-import plotly.express as px
-import plotly.figure_factory as ff
+from __future__ import annotations
+
+import hashlib
 
 from backend.cache.analysis_cache import KIND_CHART, get_analysis_cache
 from backend.cache.fingerprint import compute_dataset_fingerprint
 from backend.core.logger import get_logger
 from backend.errors.error_types import VISUALIZATION_FAILED
-from backend.utils.column_semantic_mapper import map_column_reference
 from backend.utils.json_safe import figure_to_json
-
-try:
-    from rapidfuzz import process
-except ImportError:  # pragma: no cover
-    process = None
+from backend.visualization.builder import build_chart_safe
+from backend.visualization.inference import detect_requested_chart_type
 
 logger = get_logger(__name__)
-
-
-def best_column_match(text, columns, last_column=None):
-    if not columns:
-        return None
-
-    if process is not None:
-        match = process.extractOne(text, columns)
-    else:
-        match = None
-
-    if match and match[1] > 55:
-        return match[0]
-
-    if last_column in columns:
-        return last_column
-
-    return None
-
-
-def _pick_column(reference, columns, last_columns, last_column=None):
-    mapped = map_column_reference(reference, columns, last_columns)
-    if mapped:
-        return mapped
-    return best_column_match(reference, columns, last_column)
 
 
 def _serialize_chart(fig, chart_type, used_cols):
@@ -68,6 +40,7 @@ def _chart_params(
         "chart_type": chart_type,
         "columns": sorted(str(c) for c in (columns or [])),
         "question_sig": _question_sig(question) if mode == "single" else "multi",
+        "viz_version": 2,
     }
 
 
@@ -89,7 +62,6 @@ def _apply_cached_charts(state, payload: dict, *, multi: bool) -> dict:
             state["last_column_used"] = payload.get("last_column_used")
         if payload.get("last_columns_used") is not None:
             state["last_columns_used"] = list(payload.get("last_columns_used") or [])
-        # Keep charts list in sync for session persistence
         if state.get("chart") and not state.get("charts"):
             state["charts"] = [
                 {
@@ -98,8 +70,23 @@ def _apply_cached_charts(state, payload: dict, *, multi: bool) -> dict:
                     "columns_used": state.get("chart_columns_used") or [],
                 }
             ]
+        # Restore v2 metadata when present
+        if payload.get("chart_spec") is not None:
+            state["chart_spec"] = payload.get("chart_spec")
+        if payload.get("chart_validation") is not None:
+            state["chart_validation"] = payload.get("chart_validation")
+        if payload.get("chart_recommendation"):
+            state["chart_recommendation"] = payload.get("chart_recommendation")
     state["chart_from_cache"] = True
     return state
+
+
+def _fig_to_state_json(fig):
+    """Prefer plotly JSON dict (legacy tests / clients)."""
+    try:
+        return fig.to_plotly_json()
+    except Exception:
+        return figure_to_json(fig)
 
 
 def run_multi_viz_agent(state):
@@ -114,29 +101,17 @@ def run_multi_viz_agent(state):
     )
     state["dataset_fingerprint"] = fingerprint
 
-    profile = state.get("dataset_profile", {})
-    numeric_cols = df.select_dtypes(include="number").columns.tolist()
-    categorical_cols = df.select_dtypes(exclude="number").columns.tolist()
-    time_cols = profile.get("time_columns", [])
+    profile = state.get("dataset_profile", {}) or {}
+    time_cols = list(profile.get("time_columns") or [])
 
-    # Params are deterministic for multi mode (same profile columns → same charts)
-    preview_cols: list[str] = []
-    if time_cols and numeric_cols:
-        time_col = time_cols[0]
-        value_candidates = [col for col in numeric_cols if col != time_col]
-        value_col = value_candidates[0] if value_candidates else numeric_cols[0]
-        preview_cols.extend([time_col, value_col])
-    if numeric_cols:
-        preview_cols.append(numeric_cols[0])
-    if len(numeric_cols) >= 2:
-        preview_cols.extend(numeric_cols)
-    if categorical_cols and numeric_cols:
-        preview_cols.extend([categorical_cols[0], numeric_cols[0]])
+    # Deterministic multi-chart set via safe builders
+    plan_types = ["line", "histogram", "heatmap", "bar"]
+    preview_cols: list[str] = list(df.columns.astype(str)[:8])
 
     params = _chart_params(
         mode="multi",
         chart_type="multi",
-        columns=list(dict.fromkeys(preview_cols)),
+        columns=preview_cols,
     )
     cached = get_analysis_cache().get(KIND_CHART, fingerprint, params)
     if cached is not None:
@@ -155,39 +130,27 @@ def run_multi_viz_agent(state):
         return state
 
     charts = []
-    used_columns = []
-
-    if time_cols and numeric_cols:
-        time_col = time_cols[0]
-        value_candidates = [col for col in numeric_cols if col != time_col]
-        value_col = value_candidates[0] if value_candidates else numeric_cols[0]
-        fig = px.line(df, x=time_col, y=value_col)
-        charts.append(_serialize_chart(fig, "line", [time_col, value_col]))
-        used_columns.extend([time_col, value_col])
-
-    if numeric_cols:
-        hist_col = numeric_cols[0]
-        fig = px.histogram(df, x=hist_col)
-        charts.append(_serialize_chart(fig, "histogram", [hist_col]))
-        used_columns.append(hist_col)
-
-    if len(numeric_cols) >= 2:
-        corr = df[numeric_cols].corr()
-        fig = ff.create_annotated_heatmap(
-            z=corr.values,
-            x=list(corr.columns),
-            y=list(corr.columns),
-            colorscale="Viridis",
+    used_columns: list[str] = []
+    for preferred in plan_types:
+        built = build_chart_safe(
+            df,
+            question=state.get("question") or "",
+            preferred_type=preferred,
+            time_columns=time_cols,
         )
-        charts.append(_serialize_chart(fig, "heatmap", numeric_cols))
-        used_columns.extend(numeric_cols)
-
-    if categorical_cols and numeric_cols:
-        category = categorical_cols[0]
-        value_col = numeric_cols[0]
-        fig = px.box(df, x=category, y=value_col)
-        charts.append(_serialize_chart(fig, "box", [category, value_col]))
-        used_columns.extend([category, value_col])
+        fig = built.get("fig")
+        spec = built.get("spec")
+        if fig is None or spec is None:
+            continue
+        cols = spec.used_columns
+        if not cols:
+            continue
+        # Avoid duplicate types
+        if any(c.get("type") == spec.chart_type for c in charts):
+            continue
+        charts.append(_serialize_chart(fig, spec.chart_type, cols))
+        used_columns.extend(cols)
+        preview_cols.extend(cols)
 
     state["charts"] = charts
     state["chart"] = charts[0]["figure"] if charts else None
@@ -198,6 +161,11 @@ def run_multi_viz_agent(state):
     state["columns"] = df.columns.tolist()
     state["chart_from_cache"] = False
 
+    params = _chart_params(
+        mode="multi",
+        chart_type="multi",
+        columns=list(dict.fromkeys(preview_cols)),
+    )
     payload = {
         "charts": charts,
         "chart_columns_used": state["chart_columns_used"],
@@ -221,11 +189,17 @@ def run_multi_viz_agent(state):
 def viz_agent(state):
     try:
         df = state.get("data")
-        question = (state.get("question") or "").lower()
-        profile = state.get("dataset_profile", {})
+        question = state.get("question") or ""
+        question_l = question.lower()
+        profile = state.get("dataset_profile", {}) or {}
         last_column = state.get("last_column_used")
-        last_columns = state.get("last_columns_used") or []
-        deep_mode = "deeply" in question or state.get("last_operation") == "deep_analysis"
+        last_columns = list(state.get("last_columns_used") or [])
+        if last_column and last_column not in last_columns:
+            last_columns = last_columns + [last_column]
+        deep_mode = "deeply" in question_l or state.get("last_operation") == "deep_analysis"
+
+        # Clear previous error on new attempt
+        state.pop("chart_error", None)
 
         if df is None:
             state["chart"] = None
@@ -243,67 +217,23 @@ def viz_agent(state):
         )
         state["dataset_fingerprint"] = fingerprint
 
-        numeric_cols = df.select_dtypes(include="number").columns.tolist()
-        categorical_cols = df.select_dtypes(exclude="number").columns.tolist()
-        time_cols = profile.get("time_columns", [])
+        time_cols = list(profile.get("time_columns") or [])
+        preferred = detect_requested_chart_type(question)
+        # Allow planner/state override
+        if state.get("requested_chart_type"):
+            preferred = state.get("requested_chart_type")
 
-        if not numeric_cols:
-            state["chart"] = None
-            state["chart_columns_used"] = []
-            return state
-
-        fig = None
-        used_cols = []
-        chart_type = "visualization"
-        last_column_used = None
-        last_columns_used = None
-
-        if "distribution" in question or "histogram" in question:
-            col = _pick_column(question, numeric_cols, last_columns, last_column)
-            if col is None:
-                col = numeric_cols[0]
-            used_cols = [col]
-            last_column_used = col
-            chart_type = "histogram"
-
-        elif "vs" in question:
-            parts = question.split("vs")
-            if len(parts) == 2 and len(numeric_cols) >= 2:
-                col_x = _pick_column(parts[0], numeric_cols, last_columns, last_column)
-                col_y = _pick_column(parts[1], numeric_cols, last_columns, last_column)
-                if col_x is None:
-                    col_x = numeric_cols[0]
-                if col_y is None:
-                    col_y = numeric_cols[1] if len(numeric_cols) > 1 else numeric_cols[0]
-                used_cols = [col_x, col_y]
-                last_columns_used = used_cols
-                last_column_used = col_y
-                chart_type = "scatter"
-
-        elif "correlation" in question or "heatmap" in question:
-            if len(numeric_cols) >= 2:
-                used_cols = numeric_cols
-                chart_type = "heatmap"
-
-        elif time_cols:
-            time_col = time_cols[0]
-            value_candidates = [col for col in numeric_cols if col != time_col]
-            value_col = value_candidates[0] if value_candidates else numeric_cols[0]
-            used_cols = [time_col, value_col]
-            last_columns_used = used_cols
-            chart_type = "line"
-
-        elif categorical_cols:
-            category = categorical_cols[0]
-            value_col = numeric_cols[0]
-            used_cols = [category, value_col]
-            chart_type = "box"
-
-        else:
-            col = numeric_cols[0]
-            used_cols = [col]
-            last_column_used = col
-            chart_type = "histogram"
+        # Pre-resolve for cache key stability
+        preview = build_chart_safe(
+            df,
+            question=question,
+            preferred_type=preferred,
+            time_columns=time_cols,
+            last_columns=last_columns,
+        )
+        spec = preview.get("spec")
+        chart_type = (preview.get("chart_type") or (spec.chart_type if spec else "visualization"))
+        used_cols = list(spec.used_columns) if spec else []
 
         params = _chart_params(
             mode="single",
@@ -328,69 +258,98 @@ def viz_agent(state):
             )
             return state
 
-        # Compute figure only on cache miss
-        if chart_type == "histogram":
-            fig = px.histogram(df, x=used_cols[0])
-        elif chart_type == "scatter":
-            fig = px.scatter(df, x=used_cols[0], y=used_cols[1])
-        elif chart_type == "heatmap":
-            corr = df[numeric_cols].corr()
-            fig = ff.create_annotated_heatmap(
-                z=corr.values,
-                x=list(corr.columns),
-                y=list(corr.columns),
-                colorscale="Viridis",
-            )
-        elif chart_type == "line":
-            fig = px.line(df, x=used_cols[0], y=used_cols[1])
-        elif chart_type == "box":
-            fig = px.box(df, x=used_cols[0], y=used_cols[1])
+        fig = preview.get("fig")
+        validation = preview.get("validation")
+        err = preview.get("error")
 
-        if fig:
-            chart_json = fig.to_plotly_json()
-            state["chart"] = chart_json
-            state["chart_columns_used"] = used_cols
-            state["last_chart_type"] = chart_type
-            if last_column_used is not None:
-                state["last_column_used"] = last_column_used
-            if last_columns_used is not None:
-                state["last_columns_used"] = last_columns_used
-            state["rows"] = int(df.shape[0])
-            state["columns"] = df.columns.tolist()
-            state["chart_from_cache"] = False
-            state["charts"] = [
-                {
-                    "type": chart_type,
-                    "figure": chart_json,
-                    "columns_used": used_cols,
-                }
-            ]
-
-            payload = {
-                "chart": chart_json,
-                "chart_columns_used": used_cols,
-                "last_chart_type": chart_type,
-                "last_column_used": last_column_used,
-                "last_columns_used": last_columns_used,
-            }
-            get_analysis_cache().put(KIND_CHART, fingerprint, payload, params)
-
-            logger.info(
-                "Visualization generated and cached",
-                extra={
-                    "action": "run_viz",
-                    "dataset": reference,
-                    "fingerprint": fingerprint[:16],
-                    "chart_type": chart_type,
-                    "columns": used_cols,
-                },
-            )
-        else:
+        if fig is None:
+            # Absolute last resort: empty chart metadata without crash
             state["chart"] = None
             state["chart_columns_used"] = []
+            state["chart_error"] = (
+                (validation.reason if validation and validation.reason else None)
+                or err
+                or "Could not build a chart for this dataset."
+            )
+            if validation and validation.recommended_type:
+                state["chart_recommendation"] = validation.recommended_type
+            state["error_type"] = VISUALIZATION_FAILED
+            logger.warning(
+                "Visualization produced no figure",
+                extra={
+                    "action": "run_viz",
+                    "error": state["chart_error"],
+                    "preferred": preferred,
+                },
+            )
+            return state
 
+        chart_json = _fig_to_state_json(fig)
+        used_cols = list(spec.used_columns) if spec else used_cols
+        chart_type = spec.chart_type if spec else chart_type
+
+        state["chart"] = chart_json
+        state["chart_columns_used"] = used_cols
+        state["last_chart_type"] = chart_type
+        state["last_columns_used"] = used_cols
+        if used_cols:
+            state["last_column_used"] = used_cols[-1]
+        state["rows"] = int(df.shape[0])
+        state["columns"] = df.columns.tolist()
+        state["chart_from_cache"] = False
+        state["charts"] = [
+            {
+                "type": chart_type,
+                "figure": chart_json,
+                "columns_used": used_cols,
+            }
+        ]
+
+        # v2 metadata for clients / QA
+        if spec is not None:
+            state["chart_spec"] = spec.to_dict()
+        if validation is not None:
+            state["chart_validation"] = {
+                "ok": validation.ok,
+                "reason": validation.reason,
+                "recommended_type": validation.recommended_type,
+                "errors": validation.errors,
+                "warnings": validation.warnings,
+            }
+            if validation.recommended_type:
+                state["chart_recommendation"] = validation.recommended_type
+            if not validation.ok and validation.reason:
+                # Soft notice — chart still produced via redirect/fallback
+                state["chart_notice"] = validation.reason
+        if preview.get("fallback_used"):
+            state["chart_fallback_used"] = True
+
+        payload = {
+            "chart": chart_json,
+            "chart_columns_used": used_cols,
+            "last_chart_type": chart_type,
+            "last_column_used": state.get("last_column_used"),
+            "last_columns_used": used_cols,
+            "chart_spec": state.get("chart_spec"),
+            "chart_validation": state.get("chart_validation"),
+            "chart_recommendation": state.get("chart_recommendation"),
+        }
+        get_analysis_cache().put(KIND_CHART, fingerprint, payload, params)
+
+        logger.info(
+            "Visualization generated and cached",
+            extra={
+                "action": "run_viz",
+                "dataset": reference,
+                "fingerprint": fingerprint[:16],
+                "chart_type": chart_type,
+                "columns": used_cols,
+                "redirected": bool(spec and spec.redirected),
+                "fallback_used": bool(preview.get("fallback_used")),
+            },
+        )
         return state
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — never crash the graph
         state["chart"] = None
         state["chart_columns_used"] = []
         state["chart_error"] = f"Visualization failed: {exc}"
