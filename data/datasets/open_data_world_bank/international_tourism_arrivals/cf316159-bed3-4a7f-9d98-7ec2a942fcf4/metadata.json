@@ -1,0 +1,11 @@
+{
+  "dataset_id": "cf316159-bed3-4a7f-9d98-7ec2a942fcf4",
+  "checksum": "b1636efedc31e204accb5cd28aac8a9e2664b167816a73965ea8b12ffe58bb83",
+  "download_time": "2026-07-30T09:21:58+00:00",
+  "source": "open_data:world_bank",
+  "file_format": "json",
+  "version": "1",
+  "relative_dir": "open_data_world_bank/international_tourism_arrivals/cf316159-bed3-4a7f-9d98-7ec2a942fcf4",
+  "data_filename": "dataset.json",
+  "topic": "International Tourism Arrivals"
+}

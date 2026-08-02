@@ -1,0 +1,11 @@
+{
+  "dataset_id": "7f653783-8f94-47b5-8858-4136dc7cfcab",
+  "checksum": "8d84ef6bcaccf740c01c5ed7566aae8f7b149d0e2c20001e441efd3cb5b2fa86",
+  "download_time": "2026-07-30T12:13:30+00:00",
+  "source": "open_data:world_bank",
+  "file_format": "csv",
+  "version": "1",
+  "relative_dir": "open_data_world_bank/gdp_atlantis/7f653783-8f94-47b5-8858-4136dc7cfcab",
+  "data_filename": "dataset.csv",
+  "topic": "GDP Atlantis"
+}

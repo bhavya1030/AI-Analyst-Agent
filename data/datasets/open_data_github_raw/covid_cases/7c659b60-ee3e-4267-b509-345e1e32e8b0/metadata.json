@@ -1,0 +1,11 @@
+{
+  "dataset_id": "7c659b60-ee3e-4267-b509-345e1e32e8b0",
+  "checksum": "fbd1738729a2ebac655e08fcd9562b5cf71573a8b9c03f809c2cf2c53faf047f",
+  "download_time": "2026-07-30T09:56:43+00:00",
+  "source": "open_data:github_raw",
+  "file_format": "csv",
+  "version": "1",
+  "relative_dir": "open_data_github_raw/covid_cases/7c659b60-ee3e-4267-b509-345e1e32e8b0",
+  "data_filename": "dataset.csv",
+  "topic": "Covid Cases"
+}

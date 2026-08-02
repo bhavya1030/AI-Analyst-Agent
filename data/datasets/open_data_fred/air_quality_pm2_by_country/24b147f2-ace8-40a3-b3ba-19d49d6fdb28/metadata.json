@@ -1,0 +1,11 @@
+{
+  "dataset_id": "24b147f2-ace8-40a3-b3ba-19d49d6fdb28",
+  "checksum": "706397d1a68380f9bfedc61f71addba6fd4848bd19d6ba72aeb075c07415b4d5",
+  "download_time": "2026-07-30T09:10:29+00:00",
+  "source": "open_data:fred",
+  "file_format": "csv",
+  "version": "1",
+  "relative_dir": "open_data_fred/air_quality_pm2_by_country/24b147f2-ace8-40a3-b3ba-19d49d6fdb28",
+  "data_filename": "dataset.csv",
+  "topic": "Air Quality Pm2 By Country"
+}

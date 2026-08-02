@@ -1,0 +1,11 @@
+{
+  "dataset_id": "21374c0e-152c-4aa0-9837-976d4c1afc73",
+  "checksum": "227cb326b8ff4e53819bfe1b6682687713eeb496391be572d74de588c7fa3e69",
+  "download_time": "2026-07-30T09:56:44+00:00",
+  "source": "open_data:github_raw",
+  "file_format": "csv",
+  "version": "1",
+  "relative_dir": "open_data_github_raw/olympic_medal_counts_by_country/21374c0e-152c-4aa0-9837-976d4c1afc73",
+  "data_filename": "dataset.csv",
+  "topic": "Olympic Medal Counts By Country"
+}

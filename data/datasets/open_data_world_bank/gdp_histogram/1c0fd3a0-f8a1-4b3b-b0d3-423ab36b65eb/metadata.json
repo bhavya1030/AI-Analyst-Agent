@@ -1,0 +1,11 @@
+{
+  "dataset_id": "1c0fd3a0-f8a1-4b3b-b0d3-423ab36b65eb",
+  "checksum": "8d84ef6bcaccf740c01c5ed7566aae8f7b149d0e2c20001e441efd3cb5b2fa86",
+  "download_time": "2026-07-30T12:12:01+00:00",
+  "source": "open_data:world_bank",
+  "file_format": "csv",
+  "version": "1",
+  "relative_dir": "open_data_world_bank/gdp_histogram/1c0fd3a0-f8a1-4b3b-b0d3-423ab36b65eb",
+  "data_filename": "dataset.csv",
+  "topic": "GDP Histogram"
+}

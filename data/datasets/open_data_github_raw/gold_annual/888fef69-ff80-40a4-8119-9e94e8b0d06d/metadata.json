@@ -1,0 +1,11 @@
+{
+  "dataset_id": "888fef69-ff80-40a4-8119-9e94e8b0d06d",
+  "checksum": "9d4687185ca14851f4ec36a55810583193b935b726ec72aa35a758c53a25d4af",
+  "download_time": "2026-07-30T09:10:35+00:00",
+  "source": "open_data:github_raw",
+  "file_format": "csv",
+  "version": "1",
+  "relative_dir": "open_data_github_raw/gold_annual/888fef69-ff80-40a4-8119-9e94e8b0d06d",
+  "data_filename": "dataset.csv",
+  "topic": "Gold Annual"
+}

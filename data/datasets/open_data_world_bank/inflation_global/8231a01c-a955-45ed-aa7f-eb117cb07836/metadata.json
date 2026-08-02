@@ -1,0 +1,11 @@
+{
+  "dataset_id": "8231a01c-a955-45ed-aa7f-eb117cb07836",
+  "checksum": "76870d8d5aa420838b5fc3aa462bc5e9faba5854075aa67ba348723c0e9d5ef0",
+  "download_time": "2026-07-30T09:10:42+00:00",
+  "source": "open_data:world_bank",
+  "file_format": "json",
+  "version": "1",
+  "relative_dir": "open_data_world_bank/inflation_global/8231a01c-a955-45ed-aa7f-eb117cb07836",
+  "data_filename": "dataset.json",
+  "topic": "Inflation Global"
+}

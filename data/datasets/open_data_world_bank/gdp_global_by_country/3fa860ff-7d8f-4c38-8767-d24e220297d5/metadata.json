@@ -1,0 +1,11 @@
+{
+  "dataset_id": "3fa860ff-7d8f-4c38-8767-d24e220297d5",
+  "checksum": "8d84ef6bcaccf740c01c5ed7566aae8f7b149d0e2c20001e441efd3cb5b2fa86",
+  "download_time": "2026-07-30T09:08:52+00:00",
+  "source": "open_data:world_bank",
+  "file_format": "csv",
+  "version": "1",
+  "relative_dir": "open_data_world_bank/gdp_global_by_country/3fa860ff-7d8f-4c38-8767-d24e220297d5",
+  "data_filename": "dataset.csv",
+  "topic": "GDP Global By Country"
+}

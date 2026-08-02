@@ -1,0 +1,11 @@
+{
+  "dataset_id": "be8f4276-b613-4341-a534-6a6736fd9193",
+  "checksum": "0c99be07bd92f467672c4f0c5fd160b24fbb0b587ca1612867468a07f28a555f",
+  "download_time": "2026-07-30T09:56:58+00:00",
+  "source": "open_data:fred",
+  "file_format": "csv",
+  "version": "1",
+  "relative_dir": "open_data_fred/unemployment/be8f4276-b613-4341-a534-6a6736fd9193",
+  "data_filename": "dataset.csv",
+  "topic": "Unemployment"
+}

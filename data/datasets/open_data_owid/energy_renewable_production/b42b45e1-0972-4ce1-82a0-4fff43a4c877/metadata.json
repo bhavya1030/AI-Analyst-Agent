@@ -1,0 +1,11 @@
+{
+  "dataset_id": "b42b45e1-0972-4ce1-82a0-4fff43a4c877",
+  "checksum": "266f2e2baad7975351bc9bb4aa061d22b1da9fe4c47d51d2ac6071e01e171f76",
+  "download_time": "2026-07-30T11:46:35+00:00",
+  "source": "open_data:owid",
+  "file_format": "csv",
+  "version": "1",
+  "relative_dir": "open_data_owid/energy_renewable_production/b42b45e1-0972-4ce1-82a0-4fff43a4c877",
+  "data_filename": "dataset.csv",
+  "topic": "Energy Renewable Production"
+}

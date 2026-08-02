@@ -1,0 +1,11 @@
+{
+  "dataset_id": "60c8d45d-6147-4f6c-9f94-1f6f732e906d",
+  "checksum": "00e7d456acd052795295f579fc702a02c43d6c433f40941d3dbed1166a647aea",
+  "download_time": "2026-07-30T09:21:58+00:00",
+  "source": "open_data:github_raw",
+  "file_format": "csv",
+  "version": "1",
+  "relative_dir": "open_data_github_raw/climate_temperature_weather/60c8d45d-6147-4f6c-9f94-1f6f732e906d",
+  "data_filename": "dataset.csv",
+  "topic": "Climate Temperature Weather"
+}

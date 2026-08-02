@@ -1,0 +1,11 @@
+{
+  "dataset_id": "784d090e-d6c6-4c2f-b870-91a396a14413",
+  "checksum": "7f78e2b218ce4bb8c538bbec04fdc9a7982e8d40bff972e650df603899edd5f6",
+  "download_time": "2026-07-30T09:09:12+00:00",
+  "source": "open_data:owid",
+  "file_format": "csv",
+  "version": "1",
+  "relative_dir": "open_data_owid/global_co2_emissions_time/784d090e-d6c6-4c2f-b870-91a396a14413",
+  "data_filename": "dataset.csv",
+  "topic": "Global CO2 Emissions Time"
+}
