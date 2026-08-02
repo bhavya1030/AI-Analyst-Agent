@@ -325,38 +325,27 @@ def _token_overlap(a: Iterable[str], b: Iterable[str]) -> float:
     return len(sa & sb) / max(len(sa), 1)
 
 
-def score_dataset(
+def _check_hard_rejections(
     query: MatchQuery,
     meta: DatasetMetadata,
-    *,
-    semantic_score: float | None = None,
-    min_confidence: float = DEFAULT_MIN_CONFIDENCE,
-) -> MatchScore:
-    """Score one registry record against the query; may hard-reject."""
-    reasons: list[str] = []
+    q_tokens: set[str],
+    m_topic: str,
+    m_title: str,
+    m_domain: str,
+    m_keywords: set[str],
+) -> list[str]:
     rejections: list[str] = []
-    components: dict[str, float] = {}
 
-    q_tokens = set(query.keywords) | set(tokenize(query.topic))
-    m_topic = (meta.topic or "").lower().strip()
-    m_title = (meta.title or "").lower().strip()
-    m_domain = _meta_domain(meta)
-    m_keywords = _meta_keywords(meta)
-    m_countries = _meta_countries(meta)
-    m_columns = _meta_columns(meta)
-
-    # --- Hard rejects -------------------------------------------------
     # Fictional entities in query must not bind real world datasets
     fiction_hits = [e for e in FICTIONAL_ENTITIES if e in query.raw.lower() or e in query.topic]
     if fiction_hits:
-        # Allow only if the same fictional token is explicitly in the dataset topic/title
         if not any(e in m_topic or e in m_title for e in fiction_hits):
             rejections.append(
                 f"Fictional/nonsense entity {fiction_hits} cannot match real registry dataset "
                 f"'{meta.title or meta.topic}'."
             )
 
-    # Domain conflict (e.g. sports query vs macro dataset)
+    # Domain conflict
     q_domain = query.domain or "general"
     if q_domain != "general" and m_domain != "general" and q_domain != m_domain:
         conflicts = DOMAIN_CONFLICTS.get(q_domain, set())
@@ -365,13 +354,13 @@ def score_dataset(
                 f"Domain conflict: query domain '{q_domain}' vs dataset domain '{m_domain}'."
             )
 
-    # Strong token conflict: query has olympics/medal but dataset has gdp-only identity
+    # Sports query vs Macro dataset
     sports_q = bool({"olympic", "olympics", "medal", "medals", "athlete"} & q_tokens)
     macro_ds = bool({"gdp", "inflation", "cpi"} & m_keywords) or m_domain == "macroeconomics"
     if sports_q and macro_ds and not ({"olympic", "olympics", "medal"} & m_keywords):
         rejections.append("Sports/olympics query cannot match GDP/macro registry dataset.")
 
-    # Inverse: GDP query must never match Olympics / sports-only datasets
+    # Macro query vs Sports dataset
     macro_q = bool({"gdp", "inflation", "cpi", "unemployment"} & q_tokens) or (
         query.domain == "macroeconomics"
     )
@@ -384,12 +373,89 @@ def score_dataset(
     if macro_q and sports_ds and not ({"gdp", "inflation", "cpi"} & m_keywords):
         rejections.append("GDP/macro query cannot match Olympics/sports registry dataset.")
 
-    unicorn_pop = "unicorn" in query.raw.lower() and (
-        "population" in m_topic or m_domain == "demographics"
-    )
-    if unicorn_pop:
+    # Unicorn population
+    if "unicorn" in query.raw.lower() and ("population" in m_topic or m_domain == "demographics"):
         rejections.append("Fictional 'unicorn population' cannot match real population dataset.")
 
+    return rejections
+
+
+def _eval_topic_score(
+    query_topic: str,
+    q_tokens: set[str],
+    m_topic: str,
+    m_topic_tokens: set[str],
+) -> tuple[float, list[str]]:
+    reasons = []
+    if m_topic and m_topic == query_topic:
+        score = 1.0
+        reasons.append(f"Exact topic match ('{m_topic}').")
+    elif m_topic and m_topic in query_topic:
+        score = 0.88
+        reasons.append(f"Dataset topic is contained in query ('{m_topic}').")
+    elif m_topic and query_topic in m_topic:
+        ratio = len(query_topic) / max(len(m_topic), 1)
+        score = max(0.55, 0.9 * ratio)
+        reasons.append(f"Query topic contained in dataset topic ('{query_topic}').")
+    else:
+        score = _jaccard(q_tokens, m_topic_tokens)
+        if m_topic_tokens and m_topic_tokens.issubset(q_tokens):
+            score = max(score, 0.82)
+            reasons.append("All dataset topic tokens present in query.")
+        elif score >= 0.35:
+            reasons.append(f"Topic token Jaccard={score:.2f}.")
+    return round(score, 3), reasons
+
+
+def _eval_domain_score(q_domain: str, m_domain: str) -> tuple[float, list[str]]:
+    reasons = []
+    if q_domain == "general" or m_domain == "general":
+        score = 0.45 if q_domain == m_domain else 0.35
+    elif q_domain == m_domain:
+        score = 1.0
+        reasons.append(f"Domain aligned ('{q_domain}').")
+    else:
+        score = 0.1
+        reasons.append(f"Domain weak mismatch ('{q_domain}' vs '{m_domain}').")
+    return round(score, 3), reasons
+
+
+def _eval_country_score(query_countries: list[str], m_countries: set[str]) -> tuple[float, list[str]]:
+    reasons = []
+    if query_countries:
+        if m_countries:
+            match = set(query_countries) & m_countries
+            score = 1.0 if match else 0.15
+            if score >= 1.0:
+                reasons.append(f"Country match {sorted(match)}.")
+            else:
+                reasons.append("Country requested but not present on dataset.")
+        else:
+            score = 0.4
+            reasons.append("Country requested; dataset has no country filter (treated as global).")
+    else:
+        score = 0.5
+    return round(score, 3), reasons
+
+
+def score_dataset(
+    query: MatchQuery,
+    meta: DatasetMetadata,
+    *,
+    semantic_score: float | None = None,
+    min_confidence: float = DEFAULT_MIN_CONFIDENCE,
+) -> MatchScore:
+    """Score one registry record against the query; may hard-reject."""
+    q_tokens = set(query.keywords) | set(tokenize(query.topic))
+    m_topic = (meta.topic or "").lower().strip()
+    m_title = (meta.title or "").lower().strip()
+    m_domain = _meta_domain(meta)
+    m_keywords = _meta_keywords(meta)
+    m_countries = _meta_countries(meta)
+    m_columns = _meta_columns(meta)
+
+    # Hard rejections check
+    rejections = _check_hard_rejections(query, meta, q_tokens, m_topic, m_title, m_domain, m_keywords)
     if rejections:
         return MatchScore(
             dataset_id=meta.dataset_id,
@@ -403,48 +469,24 @@ def score_dataset(
             semantic_score=semantic_score,
         )
 
-    # --- Component scores ---------------------------------------------
-    # Topic
+    # Component evaluations
+    reasons: list[str] = []
+    components: dict[str, float] = {}
+
     m_topic_tokens = set(tokenize(m_topic + " " + m_title))
-    if m_topic and m_topic == query.topic:
-        topic_score = 1.0
-        reasons.append(f"Exact topic match ('{m_topic}').")
-    elif m_topic and m_topic in query.topic:
-        # Query is broader phrasing of the same dataset topic (common in NL asks)
-        topic_score = 0.88
-        reasons.append(f"Dataset topic is contained in query ('{m_topic}').")
-    elif m_topic and query.topic in m_topic:
-        ratio = len(query.topic) / max(len(m_topic), 1)
-        topic_score = max(0.55, 0.9 * ratio)
-        reasons.append(f"Query topic contained in dataset topic ('{query.topic}').")
-    else:
-        topic_score = _jaccard(q_tokens, m_topic_tokens)
-        # Boost when all significant dataset tokens appear in the query
-        if m_topic_tokens and m_topic_tokens.issubset(q_tokens):
-            topic_score = max(topic_score, 0.82)
-            reasons.append("All dataset topic tokens present in query.")
-        elif topic_score >= 0.35:
-            reasons.append(f"Topic token Jaccard={topic_score:.2f}.")
-    components["topic"] = round(topic_score, 3)
+    topic_score, topic_reasons = _eval_topic_score(query.topic, q_tokens, m_topic, m_topic_tokens)
+    components["topic"] = topic_score
+    reasons.extend(topic_reasons)
 
-    # Domain
-    if q_domain == "general" or m_domain == "general":
-        domain_score = 0.45 if q_domain == m_domain else 0.35
-    elif q_domain == m_domain:
-        domain_score = 1.0
-        reasons.append(f"Domain aligned ('{q_domain}').")
-    else:
-        domain_score = 0.1
-        reasons.append(f"Domain weak mismatch ('{q_domain}' vs '{m_domain}').")
-    components["domain"] = round(domain_score, 3)
+    domain_score, domain_reasons = _eval_domain_score(query.domain or "general", m_domain)
+    components["domain"] = domain_score
+    reasons.extend(domain_reasons)
 
-    # Keywords / tags
     kw_score = _jaccard(q_tokens, m_keywords)
     if kw_score >= 0.25:
         reasons.append(f"Keyword/tag overlap={kw_score:.2f}.")
     components["keywords"] = round(kw_score, 3)
 
-    # Columns
     if query.column_hints and m_columns:
         col_score = _token_overlap(
             {h.lower() for h in query.column_hints},
@@ -455,25 +497,13 @@ def score_dataset(
     elif m_columns and q_tokens:
         col_score = _token_overlap(q_tokens, m_columns) * 0.8
     else:
-        col_score = 0.25  # neutral when unknown
+        col_score = 0.25
     components["columns"] = round(col_score, 3)
 
-    # Country
-    if query.countries:
-        if m_countries:
-            country_score = 1.0 if set(query.countries) & m_countries else 0.15
-            if country_score >= 1.0:
-                reasons.append(f"Country match {sorted(set(query.countries) & m_countries)}.")
-            else:
-                reasons.append("Country requested but not present on dataset.")
-        else:
-            country_score = 0.4  # dataset is global — soft accept
-            reasons.append("Country requested; dataset has no country filter (treated as global).")
-    else:
-        country_score = 0.5
-    components["country"] = round(country_score, 3)
+    country_score, country_reasons = _eval_country_score(query.countries, m_countries)
+    components["country"] = country_score
+    reasons.extend(country_reasons)
 
-    # Intent (forecast needs time-like columns)
     if query.intent == "forecast":
         timeish = any(
             any(k in c for k in ("year", "date", "time", "month"))
@@ -490,7 +520,6 @@ def score_dataset(
         intent_score = 0.6
     components["intent"] = round(intent_score, 3)
 
-    # Semantic (optional)
     if semantic_score is not None:
         sem = max(0.0, min(1.0, float(semantic_score)))
         components["semantic"] = round(sem, 3)
@@ -512,7 +541,6 @@ def score_dataset(
         "intent": 0.08,
         "semantic": 0.10 if sem is not None else 0.0,
     }
-    # redistrib if no semantic
     if sem is None:
         boost = 0.10 / 6
         for k in ("topic", "domain", "keywords", "columns", "country", "intent"):
@@ -521,16 +549,13 @@ def score_dataset(
     confidence = sum(components[k] * weights[k] for k in weights)
     confidence = max(0.0, min(1.0, confidence))
 
-    # Exact topic identity is a strong signal even with sparse tags/columns
     if m_topic and m_topic == query.topic:
         confidence = max(confidence, 0.78)
         components["topic"] = max(components.get("topic", 0), 1.0)
 
-    # High semantic similarity lifts overall match confidence when no domain/entity rejections exist
     if sem is not None and sem >= 0.55:
         confidence = max(confidence, sem)
 
-    # Require minimum topic OR keyword signal for non-exact matches
     if topic_score < 0.40 and kw_score < 0.20 and (sem is None or sem < 0.55):
         rejections.append(
             "Insufficient topic/keyword/semantic evidence for a safe registry match."
