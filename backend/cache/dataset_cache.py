@@ -32,6 +32,11 @@ _embedding_cache: dict[str, Any] = {}
 _ref_fingerprints: dict[str, str] = {}
 
 
+def _trim_dict(cache_dict: dict, max_entries: int = CACHE_MAX_ENTRIES) -> None:
+    while len(cache_dict) > max_entries:
+        cache_dict.pop(next(iter(cache_dict)), None)
+
+
 def _trim_cache(cache: OrderedDict, max_entries: int = CACHE_MAX_ENTRIES) -> None:
     while len(cache) > max_entries:
         cache.popitem(last=False)
@@ -84,10 +89,7 @@ def set_profile(
 ) -> None:
     if reference:
         _profile_cache[reference] = profile
-        if len(_profile_cache) > CACHE_MAX_ENTRIES:
-            keys = list(_profile_cache.keys())[: len(_profile_cache) - CACHE_MAX_ENTRIES]
-            for key in keys:
-                _profile_cache.pop(key, None)
+        _trim_dict(_profile_cache)
 
     fp = fingerprint or (reference and _ref_fingerprints.get(reference))
     if fp:
@@ -161,10 +163,7 @@ def set_forecast(
         _forecast_cache[ram_key] = payload
         # Keep legacy key for older callers
         _forecast_cache[f"{reference}:{target}"] = payload
-        if len(_forecast_cache) > CACHE_MAX_ENTRIES:
-            keys = list(_forecast_cache.keys())[: len(_forecast_cache) - CACHE_MAX_ENTRIES]
-            for key in keys:
-                _forecast_cache.pop(key, None)
+        _trim_dict(_forecast_cache)
 
     fp = fingerprint or (reference and _ref_fingerprints.get(reference))
     if fp:
@@ -215,10 +214,7 @@ def set_embeddings(
 ) -> None:
     if reference:
         _embedding_cache[reference] = embeddings
-        if len(_embedding_cache) > CACHE_MAX_ENTRIES:
-            keys = list(_embedding_cache.keys())[: len(_embedding_cache) - CACHE_MAX_ENTRIES]
-            for key in keys:
-                _embedding_cache.pop(key, None)
+        _trim_dict(_embedding_cache)
 
     fp = fingerprint or (reference and _ref_fingerprints.get(reference))
     if fp:
