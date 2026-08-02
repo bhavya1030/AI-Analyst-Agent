@@ -88,7 +88,10 @@ class SentenceTransformerEmbeddingGenerator(EmbeddingGenerator):
             self._model = SentenceTransformer(self.model_name)
             # Infer dimension
             try:
-                self.dimension = int(self._model.get_sentence_embedding_dimension())
+                if hasattr(self._model, "get_embedding_dimension"):
+                    self.dimension = int(self._model.get_embedding_dimension())
+                else:
+                    self.dimension = int(self._model.get_sentence_embedding_dimension())
             except Exception:
                 self.dimension = 384
             return self._model
