@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from backend.main import _build_state
+from backend.orchestrator.state_builder import build_analyst_state as _build_state
 from backend.memory.continuity import should_reuse_session_dataset
 from backend.memory.topic_switch import (
     detect_topic_switch,
