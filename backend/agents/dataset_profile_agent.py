@@ -129,64 +129,73 @@ def _ensure_profile_embedding(fingerprint: str, profile: dict, reference: str | 
         )
 
 
-def dataset_profile_agent(state):
+class DatasetProfileService:
+    """Deterministic dataset profiling and embedding caching service."""
 
-    df = state.get("data")
+    def run(self, state: dict) -> dict:
+        df = state.get("data")
 
-    if df is None:
-        state["dataset_profile"] = {}
-        return state
+        if df is None:
+            state["dataset_profile"] = {}
+            return state
 
-    reference = state.get("dataset_url") or state.get("file_path") or state.get("local_path")
-    fingerprint = state.get("dataset_fingerprint") or compute_dataset_fingerprint(
-        df, reference
-    )
-    state["dataset_fingerprint"] = fingerprint
-    if reference:
-        remember_fingerprint(reference, fingerprint)
+        reference = state.get("dataset_url") or state.get("file_path") or state.get("local_path")
+        fingerprint = state.get("dataset_fingerprint") or compute_dataset_fingerprint(
+            df, reference
+        )
+        state["dataset_fingerprint"] = fingerprint
+        if reference:
+            remember_fingerprint(reference, fingerprint)
 
-    # 1) Durable fingerprint cache
-    cache = get_analysis_cache()
-    cached_profile = cache.get(KIND_PROFILE, fingerprint)
-    if cached_profile is None and reference:
-        # 2) Legacy reference L1 / durable bridge
-        cached_profile = get_profile(reference, fingerprint=fingerprint)
+        # 1) Durable fingerprint cache
+        cache = get_analysis_cache()
+        cached_profile = cache.get(KIND_PROFILE, fingerprint)
+        if cached_profile is None and reference:
+            # 2) Legacy reference L1 / durable bridge
+            cached_profile = get_profile(reference, fingerprint=fingerprint)
 
-    if cached_profile is not None:
+        if cached_profile is not None:
+            logger.info(
+                "Dataset profile served from cache",
+                extra={
+                    "action": "profile_data",
+                    "dataset": reference,
+                    "fingerprint": fingerprint[:16],
+                },
+            )
+            state["dataset_profile"] = cached_profile
+            state["rows"] = int(df.shape[0])
+            state["columns"] = df.columns.tolist()
+            state["profile_from_cache"] = True
+            _ensure_profile_embedding(fingerprint, cached_profile, reference)
+            return state
+
+        profile = _build_profile(df)
+
+        state["dataset_profile"] = profile
+        state["rows"] = int(df.shape[0])
+        state["columns"] = df.columns.tolist()
+        state["profile_from_cache"] = False
+
+        # Durable + L1
+        cache.put(KIND_PROFILE, fingerprint, profile)
+        set_profile(reference, profile, fingerprint=fingerprint)
+        _ensure_profile_embedding(fingerprint, profile, reference)
+
         logger.info(
-            "Dataset profile served from cache",
+            "Dataset profile cached",
             extra={
                 "action": "profile_data",
                 "dataset": reference,
                 "fingerprint": fingerprint[:16],
             },
         )
-        state["dataset_profile"] = cached_profile
-        state["rows"] = int(df.shape[0])
-        state["columns"] = df.columns.tolist()
-        state["profile_from_cache"] = True
-        _ensure_profile_embedding(fingerprint, cached_profile, reference)
+
         return state
 
-    profile = _build_profile(df)
 
-    state["dataset_profile"] = profile
-    state["rows"] = int(df.shape[0])
-    state["columns"] = df.columns.tolist()
-    state["profile_from_cache"] = False
+dataset_profile_service = DatasetProfileService()
 
-    # Durable + L1
-    cache.put(KIND_PROFILE, fingerprint, profile)
-    set_profile(reference, profile, fingerprint=fingerprint)
-    _ensure_profile_embedding(fingerprint, profile, reference)
 
-    logger.info(
-        "Dataset profile cached",
-        extra={
-            "action": "profile_data",
-            "dataset": reference,
-            "fingerprint": fingerprint[:16],
-        },
-    )
-
-    return state
+def dataset_profile_agent(state: dict) -> dict:
+    return dataset_profile_service.run(state)

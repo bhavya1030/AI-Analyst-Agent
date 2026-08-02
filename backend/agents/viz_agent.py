@@ -186,176 +186,186 @@ def run_multi_viz_agent(state):
     return state
 
 
-def viz_agent(state):
-    try:
-        df = state.get("data")
-        question = state.get("question") or ""
-        question_l = question.lower()
-        profile = state.get("dataset_profile", {}) or {}
-        last_column = state.get("last_column_used")
-        last_columns = list(state.get("last_columns_used") or [])
-        if last_column and last_column not in last_columns:
-            last_columns = last_columns + [last_column]
-        deep_mode = "deeply" in question_l or state.get("last_operation") == "deep_analysis"
+class VisualizationService:
+    """Deterministic visualization generation and caching service."""
 
-        # Clear previous error on new attempt
-        state.pop("chart_error", None)
+    def run(self, state: dict) -> dict:
+        try:
+            df = state.get("data")
+            question = state.get("question") or ""
+            question_l = question.lower()
+            profile = state.get("dataset_profile", {}) or {}
+            last_column = state.get("last_column_used")
+            last_columns = list(state.get("last_columns_used") or [])
+            if last_column and last_column not in last_columns:
+                last_columns = last_columns + [last_column]
+            deep_mode = "deeply" in question_l or state.get("last_operation") == "deep_analysis"
 
-        if df is None:
-            state["chart"] = None
-            state["chart_columns_used"] = []
-            state["chart_error"] = "No data available for visualization."
-            state["error_type"] = VISUALIZATION_FAILED
-            return state
+            # Clear previous error on new attempt
+            state.pop("chart_error", None)
 
-        if deep_mode:
-            return run_multi_viz_agent(state)
+            if df is None:
+                state["chart"] = None
+                state["chart_columns_used"] = []
+                state["chart_error"] = "No data available for visualization."
+                state["error_type"] = VISUALIZATION_FAILED
+                return state
 
-        reference = state.get("dataset_url") or state.get("file_path") or state.get("local_path")
-        fingerprint = state.get("dataset_fingerprint") or compute_dataset_fingerprint(
-            df, reference
-        )
-        state["dataset_fingerprint"] = fingerprint
+            if deep_mode:
+                return run_multi_viz_agent(state)
 
-        time_cols = list(profile.get("time_columns") or [])
-        preferred = detect_requested_chart_type(question)
-        # Allow planner/state override
-        if state.get("requested_chart_type"):
-            preferred = state.get("requested_chart_type")
+            reference = state.get("dataset_url") or state.get("file_path") or state.get("local_path")
+            fingerprint = state.get("dataset_fingerprint") or compute_dataset_fingerprint(
+                df, reference
+            )
+            state["dataset_fingerprint"] = fingerprint
 
-        # Pre-resolve for cache key stability
-        preview = build_chart_safe(
-            df,
-            question=question,
-            preferred_type=preferred,
-            time_columns=time_cols,
-            last_columns=last_columns,
-        )
-        spec = preview.get("spec")
-        chart_type = (preview.get("chart_type") or (spec.chart_type if spec else "visualization"))
-        used_cols = list(spec.used_columns) if spec else []
+            time_cols = list(profile.get("time_columns") or [])
+            preferred = detect_requested_chart_type(question)
+            # Allow planner/state override
+            if state.get("requested_chart_type"):
+                preferred = state.get("requested_chart_type")
 
-        params = _chart_params(
-            mode="single",
-            chart_type=chart_type,
-            columns=used_cols,
-            question=question,
-        )
-        cached = get_analysis_cache().get(KIND_CHART, fingerprint, params)
-        if cached is not None:
-            _apply_cached_charts(state, cached, multi=False)
+            # Pre-resolve for cache key stability
+            preview = build_chart_safe(
+                df,
+                question=question,
+                preferred_type=preferred,
+                time_columns=time_cols,
+                last_columns=last_columns,
+            )
+            spec = preview.get("spec")
+            chart_type = (preview.get("chart_type") or (spec.chart_type if spec else "visualization"))
+            used_cols = list(spec.used_columns) if spec else []
+
+            params = _chart_params(
+                mode="single",
+                chart_type=chart_type,
+                columns=used_cols,
+                question=question,
+            )
+            cached = get_analysis_cache().get(KIND_CHART, fingerprint, params)
+            if cached is not None:
+                _apply_cached_charts(state, cached, multi=False)
+                state["rows"] = int(df.shape[0])
+                state["columns"] = df.columns.tolist()
+                logger.info(
+                    "Visualization served from durable cache",
+                    extra={
+                        "action": "run_viz",
+                        "dataset": reference,
+                        "fingerprint": fingerprint[:16],
+                        "chart_type": chart_type,
+                        "columns": used_cols,
+                    },
+                )
+                return state
+
+            fig = preview.get("fig")
+            validation = preview.get("validation")
+            err = preview.get("error")
+
+            if fig is None:
+                # Absolute last resort: empty chart metadata without crash
+                state["chart"] = None
+                state["chart_columns_used"] = []
+                state["chart_error"] = (
+                    (validation.reason if validation and validation.reason else None)
+                    or err
+                    or "Could not build a chart for this dataset."
+                )
+                if validation and validation.recommended_type:
+                    state["chart_recommendation"] = validation.recommended_type
+                state["error_type"] = VISUALIZATION_FAILED
+                logger.warning(
+                    "Visualization produced no figure",
+                    extra={
+                        "action": "run_viz",
+                        "error": state["chart_error"],
+                        "preferred": preferred,
+                    },
+                )
+                return state
+
+            chart_json = _fig_to_state_json(fig)
+            used_cols = list(spec.used_columns) if spec else used_cols
+            chart_type = spec.chart_type if spec else chart_type
+
+            state["chart"] = chart_json
+            state["chart_columns_used"] = used_cols
+            state["last_chart_type"] = chart_type
+            state["last_columns_used"] = used_cols
+            if used_cols:
+                state["last_column_used"] = used_cols[-1]
             state["rows"] = int(df.shape[0])
             state["columns"] = df.columns.tolist()
+            state["chart_from_cache"] = False
+            state["charts"] = [
+                {
+                    "type": chart_type,
+                    "figure": chart_json,
+                    "columns_used": used_cols,
+                }
+            ]
+
+            # v2 metadata for clients / QA
+            if spec is not None:
+                state["chart_spec"] = spec.to_dict()
+            if validation is not None:
+                state["chart_validation"] = {
+                    "ok": validation.ok,
+                    "reason": validation.reason,
+                    "recommended_type": validation.recommended_type,
+                    "errors": validation.errors,
+                    "warnings": validation.warnings,
+                }
+                if validation.recommended_type:
+                    state["chart_recommendation"] = validation.recommended_type
+                if not validation.ok and validation.reason:
+                    # Soft notice — chart still produced via redirect/fallback
+                    state["chart_notice"] = validation.reason
+            if preview.get("fallback_used"):
+                state["chart_fallback_used"] = True
+
+            payload = {
+                "chart": chart_json,
+                "chart_columns_used": used_cols,
+                "last_chart_type": chart_type,
+                "last_column_used": state.get("last_column_used"),
+                "last_columns_used": used_cols,
+                "chart_spec": state.get("chart_spec"),
+                "chart_validation": state.get("chart_validation"),
+                "chart_recommendation": state.get("chart_recommendation"),
+            }
+            get_analysis_cache().put(KIND_CHART, fingerprint, payload, params)
+
             logger.info(
-                "Visualization served from durable cache",
+                "Visualization generated and cached",
                 extra={
                     "action": "run_viz",
                     "dataset": reference,
                     "fingerprint": fingerprint[:16],
                     "chart_type": chart_type,
                     "columns": used_cols,
+                    "redirected": bool(spec and spec.redirected),
+                    "fallback_used": bool(preview.get("fallback_used")),
                 },
             )
             return state
-
-        fig = preview.get("fig")
-        validation = preview.get("validation")
-        err = preview.get("error")
-
-        if fig is None:
-            # Absolute last resort: empty chart metadata without crash
+        except Exception as exc:  # noqa: BLE001 — never crash the graph
             state["chart"] = None
             state["chart_columns_used"] = []
-            state["chart_error"] = (
-                (validation.reason if validation and validation.reason else None)
-                or err
-                or "Could not build a chart for this dataset."
-            )
-            if validation and validation.recommended_type:
-                state["chart_recommendation"] = validation.recommended_type
+            state["chart_error"] = f"Visualization failed: {exc}"
             state["error_type"] = VISUALIZATION_FAILED
-            logger.warning(
-                "Visualization produced no figure",
-                extra={
-                    "action": "run_viz",
-                    "error": state["chart_error"],
-                    "preferred": preferred,
-                },
+            logger.error(
+                "Visualization failed",
+                extra={"action": "run_viz", "error": str(exc)},
             )
             return state
 
-        chart_json = _fig_to_state_json(fig)
-        used_cols = list(spec.used_columns) if spec else used_cols
-        chart_type = spec.chart_type if spec else chart_type
 
-        state["chart"] = chart_json
-        state["chart_columns_used"] = used_cols
-        state["last_chart_type"] = chart_type
-        state["last_columns_used"] = used_cols
-        if used_cols:
-            state["last_column_used"] = used_cols[-1]
-        state["rows"] = int(df.shape[0])
-        state["columns"] = df.columns.tolist()
-        state["chart_from_cache"] = False
-        state["charts"] = [
-            {
-                "type": chart_type,
-                "figure": chart_json,
-                "columns_used": used_cols,
-            }
-        ]
+visualization_service = VisualizationService()
 
-        # v2 metadata for clients / QA
-        if spec is not None:
-            state["chart_spec"] = spec.to_dict()
-        if validation is not None:
-            state["chart_validation"] = {
-                "ok": validation.ok,
-                "reason": validation.reason,
-                "recommended_type": validation.recommended_type,
-                "errors": validation.errors,
-                "warnings": validation.warnings,
-            }
-            if validation.recommended_type:
-                state["chart_recommendation"] = validation.recommended_type
-            if not validation.ok and validation.reason:
-                # Soft notice — chart still produced via redirect/fallback
-                state["chart_notice"] = validation.reason
-        if preview.get("fallback_used"):
-            state["chart_fallback_used"] = True
 
-        payload = {
-            "chart": chart_json,
-            "chart_columns_used": used_cols,
-            "last_chart_type": chart_type,
-            "last_column_used": state.get("last_column_used"),
-            "last_columns_used": used_cols,
-            "chart_spec": state.get("chart_spec"),
-            "chart_validation": state.get("chart_validation"),
-            "chart_recommendation": state.get("chart_recommendation"),
-        }
-        get_analysis_cache().put(KIND_CHART, fingerprint, payload, params)
-
-        logger.info(
-            "Visualization generated and cached",
-            extra={
-                "action": "run_viz",
-                "dataset": reference,
-                "fingerprint": fingerprint[:16],
-                "chart_type": chart_type,
-                "columns": used_cols,
-                "redirected": bool(spec and spec.redirected),
-                "fallback_used": bool(preview.get("fallback_used")),
-            },
-        )
-        return state
-    except Exception as exc:  # noqa: BLE001 — never crash the graph
-        state["chart"] = None
-        state["chart_columns_used"] = []
-        state["chart_error"] = f"Visualization failed: {exc}"
-        state["error_type"] = VISUALIZATION_FAILED
-        logger.error(
-            "Visualization failed",
-            extra={"action": "run_viz", "error": str(exc)},
-        )
-        return state
+def viz_agent(state: dict) -> dict:
+    return visualization_service.run(state)

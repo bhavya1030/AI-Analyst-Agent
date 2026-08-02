@@ -75,61 +75,71 @@ def _create_forecast_explanation(forecast):
         return None
 
 
-def chart_interpretation_agent(state):
-    df = state.get("data")
-    if df is None:
-        state["chart_explanation"] = None
-        return state
+class ChartInterpretationService:
+    """Deterministic chart interpretation service."""
 
-    chart_type = state.get("last_chart_type")
-    cols = state.get("chart_columns_used") or []
-    explanation_parts = []
+    def run(self, state: dict) -> dict:
+        df = state.get("data")
+        if df is None:
+            state["chart_explanation"] = None
+            return state
 
-    if chart_type == "line" and len(cols) >= 2:
-        time_col, value_col = cols[0], cols[1]
-        if value_col in df and time_col in df:
-            series = pd.to_numeric(df[value_col], errors="coerce").dropna()
-            if len(series) >= 2:
-                slope = np.polyfit(np.arange(len(series)), series.values, 1)[0]
-                explanation_parts.append(
-                    f"The line chart for {value_col} shows a { _format_trend(slope)} trend over time."
-                )
+        chart_type = state.get("last_chart_type")
+        cols = state.get("chart_columns_used") or []
+        explanation_parts = []
+
+        if chart_type == "line" and len(cols) >= 2:
+            time_col, value_col = cols[0], cols[1]
+            if value_col in df and time_col in df:
+                series = pd.to_numeric(df[value_col], errors="coerce").dropna()
+                if len(series) >= 2:
+                    slope = np.polyfit(np.arange(len(series)), series.values, 1)[0]
+                    explanation_parts.append(
+                        f"The line chart for {value_col} shows a { _format_trend(slope)} trend over time."
+                    )
+                outlier = _detect_outliers(series)
+                if outlier:
+                    explanation_parts.append(outlier)
+
+        if chart_type == "scatter" and len(cols) >= 2:
+            explanation = _describe_correlation(df, cols[:2])
+            if explanation:
+                explanation_parts.append(explanation)
+            outlier = _detect_outliers(df[cols[1]].dropna())
+            if outlier:
+                explanation_parts.append(outlier)
+
+        if chart_type == "heatmap" and len(cols) >= 2:
+            explanation = _describe_correlation(df, cols[:2])
+            if explanation:
+                explanation_parts.append(explanation)
+            explanation_parts.append(
+                "The heatmap highlights correlation strengths between numeric features."
+            )
+
+        if chart_type in {"box", "histogram", "distribution"} and cols:
+            series = pd.to_numeric(df[cols[-1]], errors="coerce").dropna()
+            skew_desc = _describe_skew(series)
+            if skew_desc:
+                explanation_parts.append(skew_desc)
             outlier = _detect_outliers(series)
             if outlier:
                 explanation_parts.append(outlier)
 
-    if chart_type == "scatter" and len(cols) >= 2:
-        explanation = _describe_correlation(df, cols[:2])
-        if explanation:
-            explanation_parts.append(explanation)
-        outlier = _detect_outliers(df[cols[1]].dropna())
-        if outlier:
-            explanation_parts.append(outlier)
+        if state.get("forecast"):
+            forecast_explanation = _create_forecast_explanation(state.get("forecast"))
+            if forecast_explanation:
+                explanation_parts.append(forecast_explanation)
 
-    if chart_type == "heatmap" and len(cols) >= 2:
-        explanation = _describe_correlation(df, cols[:2])
-        if explanation:
-            explanation_parts.append(explanation)
-        explanation_parts.append(
-            "The heatmap highlights correlation strengths between numeric features."
-        )
+        if not explanation_parts:
+            explanation_parts.append("The chart shows data trends and relationships worth reviewing.")
 
-    if chart_type in {"box", "histogram", "distribution"} and cols:
-        series = pd.to_numeric(df[cols[-1]], errors="coerce").dropna()
-        skew_desc = _describe_skew(series)
-        if skew_desc:
-            explanation_parts.append(skew_desc)
-        outlier = _detect_outliers(series)
-        if outlier:
-            explanation_parts.append(outlier)
+        state["chart_explanation"] = " ".join(explanation_parts)
+        return state
 
-    if state.get("forecast"):
-        forecast_explanation = _create_forecast_explanation(state.get("forecast"))
-        if forecast_explanation:
-            explanation_parts.append(forecast_explanation)
 
-    if not explanation_parts:
-        explanation_parts.append("The chart shows data trends and relationships worth reviewing.")
+chart_interpretation_service = ChartInterpretationService()
 
-    state["chart_explanation"] = " ".join(explanation_parts)
-    return state
+
+def chart_interpretation_agent(state: dict) -> dict:
+    return chart_interpretation_service.run(state)
