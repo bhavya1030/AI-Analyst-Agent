@@ -22,7 +22,7 @@ def acq_service(tmp_path):
     # Avoid real network: inject a fake HTTP downloader
     fake = _FakeHttpDownloader(
         {
-            "https://example.com/data.csv": b"a,b\n1,2\n3,4\n",
+            "https://example.com/data.csv": b"col_a,col_b,col_c,col_d\n1,2,3,4\n5,6,7,8\n9,10,11,12\n13,14,15,16\n",
             "https://raw.githubusercontent.com/org/repo/main/data.csv": b"x,y\n9,8\n",
             "https://example.com/blob.zip": _make_zip_csv(),
         }
@@ -110,11 +110,11 @@ def test_acquire_zip_extracts_csv(acq_service):
 
 def test_github_raw_normalization():
     d = GitHubRawDownloader(http=_FakeHttpDownloader({
-        "https://raw.githubusercontent.com/org/repo/main/data.csv": b"a,b\n1,2\n",
+        "https://raw.githubusercontent.com/org/repo/main/data.csv": b"col_a,col_b,col_c,col_d\n1,2,3,4\n5,6,7,8\n9,10,11,12\n13,14,15,16\n",
     }))
     assert d.can_handle("https://github.com/org/repo/blob/main/data.csv")
     payload = d.download("https://github.com/org/repo/blob/main/data.csv")
-    assert b"a,b" in payload.content
+    assert b"col_a,col_b" in payload.content
 
 
 def test_reuse_local_path(acq_service, tmp_path):

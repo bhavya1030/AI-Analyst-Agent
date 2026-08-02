@@ -68,7 +68,7 @@ _STRIP_PATTERN = re.compile(
     r"summary|find|fetch|download|get|search|dataset|data|about|on|of|the|a|an|"
     r"for|next|previous|past|last|coming|upcoming|please|help|me|with|using|"
     r"over|across|deeply|trend|trends|rate|rates|price|prices|history|historical|"
-    r"and|to|from|years?|months?|days?|csv|json|file|upload"
+    r"growth|and|to|from|years?|months?|days?|csv|json|file|upload"
     r")\b",
     re.IGNORECASE,
 )
