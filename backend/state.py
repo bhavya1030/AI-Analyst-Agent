@@ -4,7 +4,6 @@ import pandas as pd
 
 class AnalystState(TypedDict, total=False):
     data: Optional[pd.DataFrame]
-    last_dataset: Optional[pd.DataFrame]
     cleaned: bool
     insights: list
     question: Optional[str]
@@ -38,24 +37,21 @@ class AnalystState(TypedDict, total=False):
     dataset_discovery: dict[str, Any]
     search_queries: list[str]
     source: Optional[str]
-    dataset_source: Optional[str]
-    # New data pipeline (retrieval → prepare → engineer)
+    # Data pipeline
     local_path: Optional[str]
     dataset_id: Optional[str]
-    registry_id: Optional[str]
     dataset_metadata: dict[str, Any]
     retrieval_result: dict[str, Any]
     acquisition_result: dict[str, Any]
     dataset_intelligence: dict[str, Any]
     learning_result: dict[str, Any]
     session_dataset_topic: Optional[str]
-    # Phase 5 — hierarchical memory (injected each request)
+    # Hierarchical memory
     session_id: Optional[str]
     user_id: Optional[str]
     dataset_fingerprint: Optional[str]
     memory: dict[str, Any]
     conversation_memory: dict[str, Any]
-    session_memory: dict[str, Any]
     dataset_memory: dict[str, Any]
     knowledge_memory: dict[str, Any]
     memory_hierarchy_loaded: bool
@@ -63,7 +59,3 @@ class AnalystState(TypedDict, total=False):
     conversation_summary: Optional[str]
     preferred_columns: list[str]
     preferred_chart_types: list[str]
-    prior_dataset_insights: list[str]
-    dataset_memory_key: Optional[str]
-    dataset_prior_analysis_count: int
-    knowledge_topic_hint: Optional[str]

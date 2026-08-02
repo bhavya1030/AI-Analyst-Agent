@@ -201,7 +201,6 @@ def build_analyst_state(
     bound_path = None if effective_file_path else dataset_path
     return {
         "data": dataset,
-        "last_dataset": dataset,
         "last_column_used": getattr(session, "last_column", None) if session is not None else None,
         "last_columns_used": (getattr(session, "last_columns", None) or []) if session is not None else [],
         "last_chart_type": getattr(session, "last_chart_type", None) if session is not None else None,
@@ -250,10 +249,8 @@ def build_analyst_state(
         "dataset_discovery": {},
         "search_queries": [],
         "source": "session" if dataset is not None and not file_path else None,
-        "dataset_source": None,
         "focus_country": None,
         "dataset_id": getattr(session, "dataset_id", None) if session is not None else None,
-        "registry_id": None,
         "dataset_metadata": {},
         "retrieval_result": {},
         "acquisition_result": {},
@@ -262,7 +259,6 @@ def build_analyst_state(
         "session_dataset_topic": session_topic_for_provider,
         "memory": {},
         "conversation_memory": {},
-        "session_memory": {},
         "dataset_memory": {},
         "knowledge_memory": {},
         "memory_hierarchy_loaded": False,

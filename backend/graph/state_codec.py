@@ -40,12 +40,12 @@ def build_dataset_ref(state: dict[str, Any]) -> dict[str, Any]:
         url = url or path
         path = None
     return {
-        "dataset_id": state.get("dataset_id") or state.get("registry_id"),
+        "dataset_id": state.get("dataset_id"),
         "dataset_path": path if path and not str(path).startswith(("http://", "https://")) else None,
         "dataset_url": url,
         "dataset_topic": state.get("dataset_topic"),
         "dataset_fingerprint": state.get("dataset_fingerprint"),
-        "source": state.get("source") or state.get("dataset_source"),
+        "source": state.get("source"),
         "rows": state.get("rows"),
         "columns": list(state.get("columns") or [])[:200]
         if isinstance(state.get("columns"), list)

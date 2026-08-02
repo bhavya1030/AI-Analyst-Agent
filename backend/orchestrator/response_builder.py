@@ -84,7 +84,7 @@ def build_stable_response(
         "data_acquisition_options": result.get("data_acquisition_options") or [],
         "dataset_discovery": result.get("dataset_discovery") or {},
         "search_queries": result.get("search_queries") or [],
-        "source": result.get("source") or result.get("dataset_source") or "",
+        "source": result.get("source") or "",
         "product_promise": (
             "Ask about any topic. We'll find open data when we can, "
             "use your files when you have them, or connect your sources — "
