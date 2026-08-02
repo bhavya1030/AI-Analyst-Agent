@@ -242,3 +242,9 @@ venv/
 .DS_Store
 Thumbs.db
 data/employees_files/
+# SQLite databases
+memory.db
+*.db
+
+# Runtime data
+data/datasets/
