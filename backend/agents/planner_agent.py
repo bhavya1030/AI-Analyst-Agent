@@ -153,8 +153,10 @@ def _parse_planner_response(response: str) -> list[str]:
 
 def _normalize_plan_steps(plan):
     mapping = {
-        "dataset_topic_detection": "dataset_topic_agent",
-        "dataset_search": "dataset_search_agent",
+        "dataset_topic_detection": "retrieve_dataset",
+        "dataset_topic_agent": "retrieve_dataset",
+        "dataset_search": "prepare_dataset",
+        "dataset_search_agent": "prepare_dataset",
     }
     return [mapping.get(step, step) for step in plan]
 
@@ -164,8 +166,8 @@ def _build_llm_plan(question: str, dataset_available: bool) -> list[str]:
 You are an analytics workflow planner for an AI Data Analyst.
 
 Available steps:
-- dataset_topic_agent
-- dataset_search_agent
+- retrieve_dataset
+- prepare_dataset
 - fetch_data
 - clean_data
 - profile_data
@@ -192,7 +194,7 @@ Return ONLY JSON:
 }}
 
 Rules:
-- If no dataset is available, start with dataset_topic_agent -> dataset_search_agent -> fetch_data.
+- If no dataset is available, start with retrieve_dataset -> prepare_dataset -> fetch_data.
 - Always prepare data: clean_data then profile_data before analysis.
 - Full analysis should include run_eda, run_viz, recommend_analysis, generate_insight.
 - Use forecast_data for prediction requests.

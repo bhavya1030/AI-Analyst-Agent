@@ -100,6 +100,9 @@ def create_session(
             # Ownership from auth context — never trust body.user_id for isolation
             user_id=user.user_id,
         )
+        # create_session already commits + verifies; mark response as durable
+        if isinstance(created, dict):
+            created.setdefault("committed", True)
         return JSONResponse(status_code=201, content=sanitize_for_json(created))
     except SessionAccessDenied:
         return _forbidden(body.session_id or "", user.user_id)

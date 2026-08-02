@@ -1,4 +1,4 @@
-"""Production multi-provider open-data retrieval architecture (v2)."""
+"""Production multi-provider open-data retrieval architecture (v3)."""
 
 from backend.retrieval.data_providers.base import (
     DataProvider,
@@ -13,6 +13,19 @@ from backend.retrieval.data_providers.orchestrator import (
     default_providers,
     get_provider_orchestrator,
     set_provider_orchestrator,
+)
+from backend.retrieval.data_providers.provider_circuit import (
+    is_provider_available,
+    provider_circuit_status,
+    record_provider_failure,
+    record_provider_success,
+    reset_provider_circuits,
+)
+from backend.retrieval.data_providers.ranking import PROVIDER_TRUST, rank_candidates
+from backend.retrieval.data_providers.timeout_budget import (
+    is_retryable_error,
+    new_budget,
+    run_with_timeout,
 )
 from backend.retrieval.data_providers.topic import TopicContext, extract_topic_context
 from backend.retrieval.data_providers.validation import (
@@ -39,4 +52,14 @@ __all__ = [
     "probe_download",
     "validate_download_payload",
     "validate_url_metadata",
+    "rank_candidates",
+    "PROVIDER_TRUST",
+    "new_budget",
+    "run_with_timeout",
+    "is_retryable_error",
+    "is_provider_available",
+    "record_provider_success",
+    "record_provider_failure",
+    "provider_circuit_status",
+    "reset_provider_circuits",
 ]

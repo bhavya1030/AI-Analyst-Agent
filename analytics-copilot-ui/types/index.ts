@@ -241,4 +241,13 @@ export interface SessionState {
   sessionsById: Record<string, SessionSnapshot>;
   /** Server session list */
   remoteSessionList: SessionSummary[];
+  /**
+   * Monotonic analysis request sequence.
+   * Guards against out-of-order responses and restore races.
+   */
+  analysisSeq: number;
+  /** In-flight request id (null when idle) */
+  pendingRequestId: string | null;
+  /** True only during initial mount rehydrate — never after user starts analyzing */
+  bootstrapping: boolean;
 }

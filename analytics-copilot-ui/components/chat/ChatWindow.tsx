@@ -28,8 +28,8 @@ export default function ChatWindow() {
   );
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="flex-1 space-y-3 overflow-y-auto px-0.5 py-1 scrollbar-thin">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden" data-testid="chat-window">
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-0.5 py-1 scrollbar-thin">
         {renderedMessages.length === 0 ? (
           <div className="flex h-full min-h-[200px] flex-col items-center justify-center px-2 py-4 text-center animate-slide-up">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-accent-soft text-accent">

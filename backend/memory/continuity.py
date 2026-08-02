@@ -175,8 +175,52 @@ def should_reuse_session_dataset(
     Returns (reuse, topic_mismatch).
 
     reuse=True → inject path/frame and skip discovery/upload.
+
+    Critical: a client may still send the *old* upload path while asking about a
+    new subject (Upload GDP → "Analyze IPL"). That must set topic_mismatch=True
+    so callers strip file_path and run retrieval.
     """
+    from pathlib import Path
+
+    def _path_tokens(p: str | None) -> set[str]:
+        if not p:
+            return set()
+        stem = Path(str(p).replace("\\", "/").split("/")[-1]).stem
+        return tokenize_content(stem.replace("_", " ").replace("-", " "))
+
+    # Active label = session topic + path stems (session + override)
+    active_label = " ".join(
+        filter(
+            None,
+            [
+                dataset_topic or "",
+                " ".join(_path_tokens(dataset_path)),
+                " ".join(_path_tokens(file_path_override)),
+            ],
+        )
+    )
+
     if file_path_override:
+        # Does the question match this file? (new upload for the new topic)
+        q_tok = tokenize_content(question)
+        p_tok = _path_tokens(file_path_override)
+        if q_tok and p_tok and (q_tok & p_tok):
+            # e.g. uploaded ipl.csv + "Analyze IPL" → keep file
+            return False, False
+        # Does the question match the *session* topic/path (same dataset)?
+        s_tok = tokenize_content(dataset_topic) | _path_tokens(dataset_path)
+        if q_tok and s_tok and (q_tok & s_tok):
+            return False, False
+        # Question is a pure follow-up → keep bound file
+        if is_follow_up_question(question) and not is_new_dataset_topic(
+            question, active_label or dataset_topic, has_active_dataset=True
+        ):
+            return False, False
+        # Distinct subject vs bound file (GDP file + "Analyze IPL")
+        if is_new_dataset_topic(
+            question, active_label or dataset_topic or " ".join(p_tok), has_active_dataset=True
+        ):
+            return False, True
         return False, False
 
     has_binding = bool(dataset_path or dataset_url or has_frame)
@@ -185,7 +229,7 @@ def should_reuse_session_dataset(
 
     mismatch = is_new_dataset_topic(
         question,
-        dataset_topic,
+        active_label or dataset_topic,
         has_active_dataset=has_binding,
     )
     if mismatch:

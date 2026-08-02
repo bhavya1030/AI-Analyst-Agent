@@ -39,6 +39,25 @@ interface ChatStore extends SessionState {
   resetConversation: (options?: { keepDataset?: boolean }) => void;
   setLoading: (value: boolean) => void;
   clearDataset: () => void;
+  /**
+   * Start a new analysis request — clears canvas projection, bumps seq.
+   * Returns the request id that completeAnalysis must echo.
+   */
+  beginAnalysis: (requestId: string) => void;
+  /**
+   * Commit assistant result only if requestId is still the latest pending one.
+   * Prevents stale network responses from overwriting newer analysis.
+   */
+  completeAnalysis: (
+    requestId: string,
+    message: ChatMessage,
+    extras?: {
+      datasetName?: string;
+      filePath?: string | null;
+      clearFilePath?: boolean;
+    }
+  ) => boolean;
+  failAnalysis: (requestId: string, message?: ChatMessage) => void;
   /** Snapshot active UI state (ephemeral only) */
   saveCurrentSession: () => void;
   /** Apply backend detail as active session (full restore) */
@@ -157,6 +176,86 @@ export const useChatStore = create<ChatStore>()(
       remoteSessionList: [],
       loading: false,
       sessionsLoading: false,
+      analysisSeq: 0,
+      pendingRequestId: null,
+      bootstrapping: true,
+
+      beginAnalysis: (requestId) => {
+        const state = get();
+        set({
+          loading: true,
+          pendingRequestId: requestId,
+          analysisSeq: state.analysisSeq + 1,
+          bootstrapping: false,
+          // Canvas projection clears immediately — chat history stays.
+          // Prevents previous India GDP charts/insights from lingering while IPL loads.
+          charts: [],
+          forecast: null,
+          suggestions: [],
+          hypotheses: [],
+          activeAssistantId: null,
+        });
+      },
+
+      completeAnalysis: (requestId, message, extras) => {
+        const state = get();
+        // Stale / superseded response — ignore completely
+        if (state.pendingRequestId && state.pendingRequestId !== requestId) {
+          return false;
+        }
+        if (message.role !== "assistant") {
+          return false;
+        }
+
+        const nextMessages = [...state.messages, message];
+        const patch: Partial<ChatStore> = {
+          messages: nextMessages,
+          activeAssistantId: message.id,
+          charts: message.charts || [],
+          forecast: message.forecast || null,
+          suggestions: message.suggestions || [],
+          hypotheses: message.hypotheses || [],
+          loading: false,
+          pendingRequestId: null,
+          bootstrapping: false,
+        };
+
+        if (extras?.clearFilePath) {
+          patch.filePath = "";
+        } else if (extras?.filePath != null && extras.filePath !== "") {
+          patch.filePath = extras.filePath;
+        }
+        if (extras?.datasetName) {
+          patch.datasetName = extras.datasetName;
+        }
+
+        const nextState = { ...state, ...patch } as SessionState;
+        patch.sessionsById = {
+          ...state.sessionsById,
+          [state.sessionId]: snapshotFromState(nextState),
+        };
+        set(patch);
+        return true;
+      },
+
+      failAnalysis: (requestId, message) => {
+        const state = get();
+        if (state.pendingRequestId && state.pendingRequestId !== requestId) {
+          return;
+        }
+        const patch: Partial<ChatStore> = {
+          loading: false,
+          pendingRequestId: null,
+          bootstrapping: false,
+        };
+        if (message) {
+          patch.messages = [...state.messages, message];
+          if (message.role === "assistant") {
+            patch.activeAssistantId = message.id;
+          }
+        }
+        set(patch);
+      },
 
       addMessage: (message) => {
         const state = get();
@@ -164,11 +263,14 @@ export const useChatStore = create<ChatStore>()(
         const patch: Partial<ChatStore> = { messages: next };
 
         if (message.role === "assistant") {
-          patch.activeAssistantId = message.id;
-          patch.charts = message.charts || [];
-          patch.forecast = message.forecast || null;
-          patch.suggestions = message.suggestions || [];
-          patch.hypotheses = message.hypotheses || [];
+          // Only promote canvas if this is not racing an in-flight newer request
+          if (!state.pendingRequestId || state.loading === false) {
+            patch.activeAssistantId = message.id;
+            patch.charts = message.charts || [];
+            patch.forecast = message.forecast || null;
+            patch.suggestions = message.suggestions || [];
+            patch.hypotheses = message.hypotheses || [];
+          }
         }
 
         if (message.role === "user") {
@@ -222,11 +324,27 @@ export const useChatStore = create<ChatStore>()(
       },
 
       hydrateFromSessionDetail: (detail) => {
-        const snap = snapshotFromSessionDetail(detail);
         const state = get();
+        // Never clobber an in-flight analysis or a post-ask result with a restore.
+        if (state.loading || state.pendingRequestId) {
+          return;
+        }
+        // Only restore if this is the active session (or bootstrapping into it)
+        if (
+          detail.session_id &&
+          state.sessionId &&
+          detail.session_id !== state.sessionId &&
+          !state.bootstrapping
+        ) {
+          return;
+        }
+        const snap = snapshotFromSessionDetail(detail);
         set({
           sessionsById: { ...state.sessionsById, [snap.sessionId]: snap },
           ...applySnapshot(snap),
+          bootstrapping: false,
+          pendingRequestId: null,
+          loading: false,
         });
       },
 
@@ -305,13 +423,18 @@ export const useChatStore = create<ChatStore>()(
       openSessionFromBackend: async (sessionId, options) => {
         if (!sessionId) return false;
         const state = get();
+        // Do not interrupt an active analysis with a restore
+        if (state.loading || state.pendingRequestId) {
+          return false;
+        }
         get().saveCurrentSession();
 
-        if (sessionId === state.sessionId && state.messages.length > 0 && !options?.focusMessageId) {
-          // Already active with content — still refresh from server for consistency
-        }
-
         const detail = await fetchSessionDetail(sessionId);
+        // Re-check after await
+        const after = get();
+        if (after.loading || after.pendingRequestId) {
+          return false;
+        }
         if (detail) {
           get().openSession(sessionId, {
             focusMessageId: options?.focusMessageId,
@@ -325,11 +448,40 @@ export const useChatStore = create<ChatStore>()(
       },
 
       rehydrateActiveSession: async () => {
-        const { sessionId } = get();
-        if (!sessionId) return;
+        const { sessionId, loading, pendingRequestId } = get();
+        if (!sessionId) {
+          set({ bootstrapping: false });
+          return;
+        }
+        // User already started analyzing — never overwrite
+        if (loading || pendingRequestId) {
+          set({ bootstrapping: false });
+          return;
+        }
         const detail = await fetchSessionDetail(sessionId);
+        // Re-check after await — a request may have started while we fetched
+        const after = get();
+        if (after.loading || after.pendingRequestId) {
+          set({ bootstrapping: false });
+          return;
+        }
+        if (after.sessionId !== sessionId) {
+          set({ bootstrapping: false });
+          return;
+        }
+        // If user already has newer local messages than server (optimistic UI), keep them
+        if (
+          after.messages.length > 0 &&
+          detail &&
+          (detail.message_count || 0) < after.messages.length
+        ) {
+          set({ bootstrapping: false });
+          return;
+        }
         if (detail) {
           get().hydrateFromSessionDetail(detail);
+        } else {
+          set({ bootstrapping: false });
         }
       },
 

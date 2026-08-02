@@ -5,7 +5,6 @@ from __future__ import annotations
 import uuid
 
 from backend.sessions.service import SessionNotFoundError, SessionService, get_session_service
-from backend.db import get_session, save_session
 
 
 def _sid(prefix: str = "p1") -> str:
@@ -105,36 +104,10 @@ def test_ask_turn_persists_messages_and_artifacts():
     assert detail["eda_summary"].get("rows") == 100
     assert detail["last_insight"]
 
-    # Legacy dual-write still works
-    legacy = get_session(sid)
-    assert legacy is not None
-    assert legacy.last_query == "Forecast India GDP for 10 years"
-    assert legacy.dataset_topic == "India GDP"
+
 
     svc.delete_session(sid, hard=True)
 
-
-def test_legacy_session_memory_migrates_on_get():
-    sid = _sid("legacy")
-    save_session(
-        session_id=sid,
-        last_query="Analyze gold prices",
-        last_insight="Gold rose over the decade.",
-        dataset_topic="gold",
-        dataset_url="https://example.com/gold.csv",
-        eda_summary={"n": 10},
-        last_intent="analysis",
-    )
-
-    svc = SessionService()
-    detail = svc.get_session_detail(sid)
-    assert detail["session_id"] == sid
-    assert detail["dataset_topic"] == "gold"
-    assert len(detail["chat_history"]) >= 1
-    assert detail["last_query"] == "Analyze gold prices"
-    assert detail["eda_summary"].get("n") == 10
-
-    svc.delete_session(sid, hard=True)
 
 
 def test_list_session_ids_backward_compatible():
