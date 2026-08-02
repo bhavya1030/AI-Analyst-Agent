@@ -67,7 +67,7 @@ def test_merge_and_extract_timings():
 
 
 def test_stable_response_includes_timings():
-    from backend.main import _stable_response
+    from backend.orchestrator.response_builder import build_stable_response as _stable_response
     from backend.production.pipeline_timing import pipeline_timer
 
     with pipeline_timer():

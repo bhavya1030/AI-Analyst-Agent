@@ -35,7 +35,7 @@ def test_fts_search_ranks_title_and_messages():
     svc.create_session(session_id=a, title="Gold price deep dive", user_id=uid, tags=["metals"])
     svc.create_session(session_id=b, title="India GDP trends", user_id=uid, tags=["macro"])
 
-    svc.append_user_message(a, "Forecast bullion prices for next decade")
+    svc.append_user_message(a, "Forecast bullion prices for next decade", user_id=uid)
     svc.record_assistant_turn(
         a,
         question="Forecast bullion prices for next decade",
@@ -45,8 +45,9 @@ def test_fts_search_ranks_title_and_messages():
             "rows": 10,
             "columns": ["Year", "Price"],
         },
+        user_id=uid,
     )
-    svc.append_user_message(b, "Show GDP growth chart")
+    svc.append_user_message(b, "Show GDP growth chart", user_id=uid)
     svc.record_assistant_turn(
         b,
         question="Show GDP growth chart",
@@ -56,6 +57,7 @@ def test_fts_search_ranks_title_and_messages():
             "rows": 20,
             "columns": ["Year", "Value"],
         },
+        user_id=uid,
     )
 
     rebuild_all_session_fts()
