@@ -245,6 +245,12 @@ data/employees_files/
 # SQLite databases
 memory.db
 *.db
+*.db-shm
+*.db-wal
 
 # Runtime data
 data/datasets/
+downloads/
+tmp/
+__pycache__/
+*.pyc
