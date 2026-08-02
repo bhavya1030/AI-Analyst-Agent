@@ -9,7 +9,8 @@ import pandas as pd
 
 from backend.agents.conversation_context_agent import conversation_context_agent
 from backend.agents.planner_agent import planner_agent
-from backend.main import _build_state, _question_is_new_topic
+from backend.orchestrator.state_builder import build_analyst_state as _build_state
+from backend.orchestrator.state_builder import _question_is_new_topic
 from backend.memory.continuity import (
     build_planner_injection,
     is_follow_up_question,

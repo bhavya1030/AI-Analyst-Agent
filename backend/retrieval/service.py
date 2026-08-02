@@ -25,7 +25,7 @@ _default_agent: DatasetRetrievalAgent | None = None
 def _build_default_agent() -> DatasetRetrievalAgent:
     # Lazy imports keep optional deps local and tests injectable
     from backend.dataset_library import dataset_exists, get_dataset_path
-    from backend.db import get_session
+
     from backend.registry import (
         get_by_dataset_id,
         get_by_topic,
@@ -34,7 +34,26 @@ def _build_default_agent() -> DatasetRetrievalAgent:
     )
     from backend.semantic import search_similar
 
-    session_provider = SessionProvider(session_loader=get_session)
+    def _load_session_for_retrieval(session_id: str):
+        """Load session fields needed by SessionProvider from SessionService."""
+        try:
+            from backend.sessions.service import get_session_service
+            detail = get_session_service().get_session_detail(
+                session_id, include_deleted=False
+            )
+
+            class _S:
+                pass
+
+            s = _S()
+            s.dataset_topic = detail.get("dataset_topic") or None
+            s.dataset_url = detail.get("dataset_url") or None
+            s.dataset_path = detail.get("dataset_path") or None
+            return s
+        except Exception:
+            return None
+
+    session_provider = SessionProvider(session_loader=_load_session_for_retrieval)
     registry_provider = RegistryProvider(
         get_by_topic=get_by_topic,
         get_by_dataset_id=get_by_dataset_id,

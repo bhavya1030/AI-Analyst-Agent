@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session as DbSession
 from sqlalchemy.orm import selectinload
 
 from backend.core.logger import get_logger
-from backend.db import SessionLocal, SessionMemory, engine
+from backend.db import SessionLocal, engine
 from backend.sessions.models import AnalysisSession, SessionArtifact, SessionMessage
 from backend.sessions.transactions import (
     commit_and_barrier,
@@ -159,7 +159,7 @@ class SessionAccessDenied(Exception):
 
 
 class SessionService:
-    """Production session store with legacy dual-write and user isolation."""
+    """Production session store — single source of truth for all session state."""
 
     def __init__(self) -> None:
         ensure_session_tables()
@@ -283,7 +283,7 @@ class SessionService:
                             existing.dataset_url = dataset_url
                         if tags is not None:
                             existing.tags_json = list(tags)
-                        self._dual_write_legacy(db, existing, commit=False)
+
                         commit_and_barrier(db)
                         db.refresh(existing)
                         summary = self._summary_dict(existing)
@@ -317,7 +317,7 @@ class SessionService:
                     )
                     db.add(row)
                     db.flush()  # allocate PK before dual-write
-                    self._dual_write_legacy(db, row, commit=False)
+
                     commit_and_barrier(db)
                     db.refresh(row)
                     summary = self._summary_dict(row)
@@ -377,19 +377,9 @@ class SessionService:
                         row.deleted = False
                         row.status = "active"
                         row.updated_at = _utcnow()
-                        self._dual_write_legacy(db, row, commit=False)
+
                         commit_and_barrier(db)
                         db.refresh(row)
-                    return self._detach_copy(db, row)
-
-                # Lazy-migrate from legacy flat table
-                legacy = (
-                    db.query(SessionMemory)
-                    .filter(SessionMemory.session_id == sid)
-                    .first()
-                )
-                if legacy is not None:
-                    row = self._migrate_legacy(db, legacy, user_id=owner)
                     return self._detach_copy(db, row)
 
                 now = _utcnow()
@@ -405,7 +395,7 @@ class SessionService:
                 )
                 db.add(row)
                 db.flush()
-                self._dual_write_legacy(db, row, commit=False)
+
                 commit_and_barrier(db)
                 db.refresh(row)
                 # Verify before callers proceed to GET / append
@@ -461,7 +451,7 @@ class SessionService:
         try:
             # Phase 8: always scope list to a user (default anonymous)
             owner = (user_id or "anonymous").strip() or "anonymous"
-            self._migrate_all_legacy(db, user_id=owner)
+
 
             q_db = db.query(AnalysisSession).filter(
                 AnalysisSession.user_id == owner
@@ -569,7 +559,7 @@ class SessionService:
         owner = (user_id or "anonymous").strip() or "anonymous"
         db = SessionLocal()
         try:
-            self._migrate_all_legacy(db, user_id=owner)
+
 
             q = db.query(AnalysisSession.session_id).filter(
                 AnalysisSession.user_id == owner
@@ -608,31 +598,6 @@ class SessionService:
                     .filter(AnalysisSession.session_id == sid)
                     .first()
                 )
-
-                if row is None:
-                    legacy = (
-                        db.query(SessionMemory)
-                        .filter(SessionMemory.session_id == sid)
-                        .first()
-                    )
-                    if legacy is None:
-                        last_err = SessionNotFoundError(sid)
-                        if attempt < 5:
-                            import time as _time
-
-                            _time.sleep(0.015 * (attempt + 1))
-                            continue
-                        raise last_err
-                    row = self._migrate_legacy(db, legacy, user_id=owner)
-                    row = (
-                        db.query(AnalysisSession)
-                        .options(
-                            selectinload(AnalysisSession.messages),
-                            selectinload(AnalysisSession.artifacts),
-                        )
-                        .filter(AnalysisSession.session_id == sid)
-                        .first()
-                    )
 
                 if row is None:
                     last_err = SessionNotFoundError(sid)
@@ -710,7 +675,7 @@ class SessionService:
             row.updated_at = _utcnow()
             db.commit()
             db.refresh(row)
-            self._dual_write_legacy(db, row)
+
             self._reindex(session_id)
             return self._summary_dict(row)
         finally:
@@ -767,7 +732,7 @@ class SessionService:
             row.last_activity_at = row.updated_at
             db.commit()
             db.refresh(row)
-            self._dual_write_legacy(db, row)
+
             logger.info("Session restored", extra={"session_id": session_id})
             return self._summary_dict(row)
         finally:
@@ -939,7 +904,7 @@ class SessionService:
 
             db.commit()
             db.refresh(clone)
-            self._dual_write_legacy(db, clone)
+
             self._reindex(new_id)
             summary = self._summary_dict(clone)
             summary["source_session_id"] = session_id
@@ -1128,7 +1093,7 @@ class SessionService:
 
             db.commit()
             db.refresh(row)
-            self._dual_write_legacy(db, row)
+
             self._reindex(new_id)
             summary = self._summary_dict(row)
             summary["imported"] = True
@@ -1175,26 +1140,7 @@ class SessionService:
                 .first()
             )
             if row is None:
-                # Soft-delete / remove legacy-only
-                legacy = (
-                    db.query(SessionMemory)
-                    .filter(SessionMemory.session_id == session_id)
-                    .first()
-                )
-                if legacy is None:
-                    raise SessionNotFoundError(session_id)
-                if hard:
-                    db.delete(legacy)
-                    db.commit()
-                else:
-                    # Create tombstone session then soft-delete
-                    row = self._migrate_legacy(
-                        db, legacy, user_id=(user_id or "anonymous")
-                    )
-                    row.deleted = True
-                    row.status = "deleted"
-                    row.updated_at = _utcnow()
-                    db.commit()
+                raise SessionNotFoundError(session_id)
                 return {"session_id": session_id, "deleted": True, "hard": hard}
 
             # Enforce ownership only when caller supplies user_id (API always does)
@@ -1206,13 +1152,6 @@ class SessionService:
             if hard:
                 sid = row.session_id
                 db.delete(row)
-                legacy = (
-                    db.query(SessionMemory)
-                    .filter(SessionMemory.session_id == sid)
-                    .first()
-                )
-                if legacy is not None:
-                    db.delete(legacy)
                 db.commit()
                 self._drop_index(sid)
                 try:
@@ -1278,7 +1217,7 @@ class SessionService:
                     if preview:
                         row.title = preview[:72] + ("…" if len(preview) > 72 else "")
 
-                self._dual_write_legacy(db, row, commit=False)
+
                 commit_and_barrier(db)
                 db.refresh(msg)
                 try:
@@ -1415,7 +1354,6 @@ class SessionService:
     ) -> dict[str, Any]:
         """
         Persist assistant message + artifacts after a successful graph run.
-        Also dual-writes legacy session_memory fields.
         """
         ensure_session_tables()
         self.ensure_session(session_id, user_id=user_id)
@@ -1552,7 +1490,7 @@ class SessionService:
             db.flush()
 
             # Single transaction: session fields + messages + artifacts + legacy memory
-            self._dual_write_legacy(db, row, commit=False)
+
             commit_and_barrier(db)
             db.refresh(msg)
 
@@ -1934,189 +1872,6 @@ class SessionService:
 
         return arts
 
-    def _migrate_legacy(
-        self,
-        db: DbSession,
-        legacy: SessionMemory,
-        *,
-        user_id: str = "anonymous",
-    ) -> AnalysisSession:
-        now = _utcnow()
-        sid = legacy.session_id
-        existing = (
-            db.query(AnalysisSession)
-            .filter(AnalysisSession.session_id == sid)
-            .first()
-        )
-        if existing is not None:
-            return existing
-
-        title = "New analysis"
-        if legacy.last_query:
-            preview = str(legacy.last_query).strip().replace("\n", " ")
-            title = preview[:72] + ("…" if len(preview) > 72 else "")
-        elif legacy.dataset_topic:
-            title = str(legacy.dataset_topic)[:72]
-
-        row = AnalysisSession(
-            session_id=sid,
-            user_id=user_id or "anonymous",
-            title=title,
-            created_at=now,
-            updated_at=now,
-            last_activity_at=now,
-            dataset_path=legacy.dataset_path,
-            dataset_url=legacy.dataset_url,
-            dataset_topic=legacy.dataset_topic,
-            dataset_name=legacy.dataset_topic,
-            last_column=legacy.last_column,
-            last_columns=legacy.last_columns,
-            last_used_columns=legacy.last_columns,
-            last_chart_type=legacy.last_chart_type,
-            last_intent=legacy.last_intent,
-            last_operation=legacy.last_operation,
-            last_forecast_target=legacy.last_forecast_target,
-            last_query=legacy.last_query,
-            last_insight=legacy.last_insight,
-            eda_summary=legacy.eda_summary,
-            status="active",
-            message_count=0,
-            current_dataset={
-                "dataset_path": legacy.dataset_path,
-                "dataset_url": legacy.dataset_url,
-                "dataset_topic": legacy.dataset_topic,
-            },
-        )
-        db.add(row)
-        db.flush()
-
-        seq = 1
-        if legacy.last_query:
-            db.add(
-                SessionMessage(
-                    id=str(uuid.uuid4()),
-                    session_id=sid,
-                    seq=seq,
-                    role="user",
-                    content=str(legacy.last_query),
-                    created_at=now,
-                )
-            )
-            seq += 1
-        if legacy.last_insight:
-            msg_id = str(uuid.uuid4())
-            db.add(
-                SessionMessage(
-                    id=msg_id,
-                    session_id=sid,
-                    seq=seq,
-                    role="assistant",
-                    content=str(legacy.last_insight),
-                    created_at=now,
-                    payload={},
-                )
-            )
-            db.flush()  # message row must exist before artifact FKs
-            if legacy.eda_summary:
-                db.add(
-                    SessionArtifact(
-                        id=str(uuid.uuid4()),
-                        session_id=sid,
-                        message_id=msg_id,
-                        kind="eda",
-                        title="EDA summary",
-                        created_at=now,
-                        content=legacy.eda_summary,
-                        meta={"migrated": True},
-                    )
-                )
-            db.add(
-                SessionArtifact(
-                    id=str(uuid.uuid4()),
-                    session_id=sid,
-                    message_id=msg_id,
-                    kind="insight",
-                    title="Insight",
-                    created_at=now,
-                    content={"text": legacy.last_insight},
-                    meta={"migrated": True},
-                )
-            )
-            seq += 1
-
-        row.message_count = seq - 1
-        db.commit()
-        db.refresh(row)
-        logger.info("Migrated legacy session_memory row", extra={"session_id": sid})
-        return row
-
-    def _migrate_all_legacy(
-        self, db: DbSession, *, user_id: str | None = None
-    ) -> int:
-        existing_ids = {
-            r[0] for r in db.query(AnalysisSession.session_id).all()
-        }
-        legacy_rows = db.query(SessionMemory).all()
-        count = 0
-        for legacy in legacy_rows:
-            if legacy.session_id in existing_ids:
-                continue
-            self._migrate_legacy(db, legacy, user_id=user_id or "anonymous")
-            count += 1
-        return count
-
-    def _dual_write_legacy(
-        self,
-        db: DbSession,
-        row: AnalysisSession,
-        *,
-        commit: bool = True,
-    ) -> None:
-        """Keep session_memory in sync so old get_session/save_session still work.
-
-        When commit=False the caller owns the transaction (atomic session create/turn).
-        Never roll back the outer transaction on dual-write failure when commit=False.
-        """
-        sid = getattr(row, "session_id", None)
-        try:
-            with db.no_autoflush:
-                legacy = (
-                    db.query(SessionMemory)
-                    .filter(SessionMemory.session_id == sid)
-                    .first()
-                )
-                if legacy is None:
-                    legacy = SessionMemory(session_id=sid)
-                    db.add(legacy)
-                legacy.dataset_path = row.dataset_path
-                legacy.dataset_url = row.dataset_url
-                legacy.dataset_topic = row.dataset_topic
-                legacy.last_column = row.last_column
-                legacy.last_columns = row.last_columns
-                legacy.last_chart_type = row.last_chart_type
-                legacy.last_intent = row.last_intent
-                legacy.last_operation = row.last_operation
-                legacy.last_forecast_target = row.last_forecast_target
-                legacy.last_query = row.last_query
-                legacy.last_insight = row.last_insight
-                legacy.eda_summary = row.eda_summary
-            if commit:
-                db.commit()
-            else:
-                db.flush()
-        except Exception as exc:
-            if commit:
-                try:
-                    db.rollback()
-                except Exception:
-                    pass
-            logger.warning(
-                "Legacy dual-write failed",
-                extra={"session_id": sid, "error": str(exc)},
-            )
-            if not commit:
-                # Re-raise so outer atomic txn can roll back cleanly
-                raise
 
     def _summary_dict(self, row: AnalysisSession) -> dict[str, Any]:
         return sanitize_for_json(
