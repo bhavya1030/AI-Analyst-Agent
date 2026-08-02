@@ -120,9 +120,7 @@ ollama run qwen3:8b
 
 1. Start the backend server:
    ```bash
-   cd backend
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   uvicorn main:app --reload
+   uvicorn backend.main:app --reload
    ```
 
 2. Start the frontend (in a new terminal):
@@ -152,22 +150,18 @@ ollama run qwen3:8b
 
 ```
 ├── analytics-copilot-ui/          # Next.js frontend application
-│   ├── app/                       # Next.js app directory
-│   ├── components/                # Reusable React components
-│   ├── hooks/                     # Custom React hooks
-│   ├── services/                  # API service functions
-│   ├── store/                     # Zustand state management
-│   ├── types/                     # TypeScript type definitions
-│   └── utils/                     # Utility functions
 ├── backend/                       # FastAPI backend application
-│   ├── agents/                    # AI agent implementations
-│   ├── cache/                     # Caching mechanisms
+│   ├── api/                       # API router endpoints (ask, analyze, upload, health, misc)
+│   ├── orchestrator/              # Request orchestrator, state builder & response builder
+│   ├── agents/                    # Decision agents & deterministic execution services
+│   ├── cache/                     # Multi-tier caching mechanisms (Ask, Analysis, Dataset)
+│   ├── memory/                    # Multi-level memory hierarchy (L1-L4)
+│   ├── retrieval/                 # Dataset retrieval providers & dataset resolver
+│   ├── graph/                     # LangGraph workflow definitions & state codec
 │   ├── core/                      # Core utilities and logging
-│   ├── graph/                     # Workflow graph definitions
-│   ├── tools/                     # Data processing tools
-│   └── utils/                     # Backend utilities
-├── data/                          # Sample datasets
-├── tests/                         # Test suites
+│   └── tools/                     # Data processing tools
+├── data/                          # Runtime datasets & storage
+├── tests/                         # Full test suite
 └── requirements.txt               # Python dependencies
 ```
 
@@ -179,8 +173,7 @@ Once the backend is running, visit `http://localhost:8000/docs` for interactive 
 
 ### Backend Tests
 ```bash
-cd backend
-python -m pytest tests/
+python -m pytest
 ```
 
 ### Frontend Tests
