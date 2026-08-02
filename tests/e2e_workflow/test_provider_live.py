@@ -51,6 +51,7 @@ def test_retrieve_dataset_open_data_hit(topic: str):
         RetrievalStatus.INTERNET_HIT,
         RetrievalStatus.REGISTRY_HIT,
         RetrievalStatus.SEMANTIC_HIT,
+        RetrievalStatus.STALE_REGISTRY_ENTRY,
     }, f"{topic} -> {result.status} {result.reason}"
     assert result.download_url or result.local_path
     if result.download_url:

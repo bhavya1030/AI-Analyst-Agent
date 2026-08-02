@@ -12,7 +12,7 @@ def test_planner_uses_llm_planning_for_dataset_search(monkeypatch):
         if "You are an analytics intent classifier" in prompt:
             return '{"intents": ["dataset_search", "visualization"]}'
         if "You are an analytics workflow planner" in prompt:
-            return '{"plan": ["dataset_topic_agent", "dataset_search_agent", "fetch_data", "profile_data", "run_eda", "run_viz", "generate_insight"]}'
+            return '{"plan": ["retrieve_dataset", "prepare_dataset", "fetch_data", "profile_data", "run_eda", "run_viz", "generate_insight"]}'
         return ""
 
     monkeypatch.setattr(ollama_client, "invoke_llm", fake_invoke_llm)
@@ -28,8 +28,8 @@ def test_planner_uses_llm_planning_for_dataset_search(monkeypatch):
 
     result = planner_agent(state)
 
-    assert result["plan"][0] == "dataset_topic_agent"
-    assert "dataset_search_agent" in result["plan"]
+    assert result["plan"][0] == "retrieve_dataset"
+    assert "prepare_dataset" in result["plan"]
     assert "run_eda" in result["plan"]
     assert result["last_operation"] == "visualization"
 

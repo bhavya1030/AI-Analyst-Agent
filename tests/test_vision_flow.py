@@ -34,8 +34,8 @@ def test_full_analysis_plan_includes_pipeline():
     intents = ["eda", "dataset_autoload"]
     plan = _build_rule_based_plan(state, "analyze india's gdp", intents, dataset_requested=True)
     for step in (
-        "dataset_topic_agent",
-        "dataset_search_agent",
+        "retrieve_dataset",
+        "prepare_dataset",
         "fetch_data",
         "profile_data",
         "run_eda",

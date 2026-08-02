@@ -526,6 +526,10 @@ def score_dataset(
         confidence = max(confidence, 0.78)
         components["topic"] = max(components.get("topic", 0), 1.0)
 
+    # High semantic similarity lifts overall match confidence when no domain/entity rejections exist
+    if sem is not None and sem >= 0.55:
+        confidence = max(confidence, sem)
+
     # Require minimum topic OR keyword signal for non-exact matches
     if topic_score < 0.40 and kw_score < 0.20 and (sem is None or sem < 0.55):
         rejections.append(
