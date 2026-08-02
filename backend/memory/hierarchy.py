@@ -42,8 +42,12 @@ DEFAULT_L1_WINDOW = 12
 MAX_INSIGHT_DIGEST = 30
 
 
+_session_col_ready = False
+_session_col_lock = threading.Lock()
+
+
 class MemoryHierarchyService:
-    """Load / inject / persist the four-level memory hierarchy."""
+    """Load / inject / persist the memory hierarchy layers."""
 
     def __init__(self, *, l1_window: int = DEFAULT_L1_WINDOW):
         self.l1_window = max(2, int(l1_window or DEFAULT_L1_WINDOW))
@@ -53,31 +57,39 @@ class MemoryHierarchyService:
     @staticmethod
     def _ensure_session_memory_column() -> None:
         """Add analysis_sessions.memory_state if missing (SQLite ALTER)."""
-        try:
-            from sqlalchemy import inspect, text
+        global _session_col_ready
+        if _session_col_ready:
+            return
+        with _session_col_lock:
+            if _session_col_ready:
+                return
+            try:
+                from sqlalchemy import inspect, text
 
-            from backend.db import engine
-            from backend.sessions.service import ensure_session_tables
+                from backend.db import engine
+                from backend.sessions.service import ensure_session_tables
 
-            ensure_session_tables()
-            with engine.begin() as conn:
-                insp = inspect(conn)
-                if "analysis_sessions" not in insp.get_table_names():
-                    return
-                cols = {c["name"] for c in insp.get_columns("analysis_sessions")}
-                if "memory_state" not in cols:
-                    conn.execute(
-                        text(
-                            "ALTER TABLE analysis_sessions "
-                            "ADD COLUMN memory_state JSON"
+                ensure_session_tables()
+                with engine.begin() as conn:
+                    insp = inspect(conn)
+                    if "analysis_sessions" not in insp.get_table_names():
+                        _session_col_ready = True
+                        return
+                    cols = {c["name"] for c in insp.get_columns("analysis_sessions")}
+                    if "memory_state" not in cols:
+                        conn.execute(
+                            text(
+                                "ALTER TABLE analysis_sessions "
+                                "ADD COLUMN memory_state JSON"
+                            )
                         )
-                    )
-                    logger.info("Added analysis_sessions.memory_state column")
-        except Exception as exc:
-            logger.debug(
-                "memory_state column ensure skipped",
-                extra={"error": str(exc)},
-            )
+                        logger.info("Added analysis_sessions.memory_state column")
+                _session_col_ready = True
+            except Exception as exc:
+                logger.debug(
+                    "memory_state column ensure skipped",
+                    extra={"error": str(exc)},
+                )
 
     # ------------------------------------------------------------------
     # Load
