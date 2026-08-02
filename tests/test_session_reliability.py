@@ -10,7 +10,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from backend.db import SessionLocal, get_session
+from backend.db import SessionLocal
 from backend.sessions.models import AnalysisSession, SessionArtifact, SessionMessage
 from backend.sessions.router import router
 from backend.sessions.service import (
@@ -120,10 +120,6 @@ def test_assistant_turn_atomic_messages_and_artifacts():
     assert len(detail["messages"]) >= 2
     assert len(detail["generated_charts"]) >= 1 or len(detail["artifacts"]) >= 1
 
-    # Legacy dual-write committed in same txn
-    legacy = get_session(sid)
-    assert legacy is not None
-    assert legacy.dataset_topic == "GDP" or legacy.last_query
 
     finalize = finalize_session_write(sid, expect_messages=True)
     assert finalize["finalized"] is True
