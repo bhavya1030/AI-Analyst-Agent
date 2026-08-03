@@ -24,12 +24,17 @@ logger = get_logger(__name__)
 
 @dataclass
 class SessionSnapshot:
-    """Lightweight session state used for state building and memory loading."""
+    """Lightweight session state used for state building and memory loading (Phase 1)."""
 
     dataset_topic: str | None = None
     dataset_url: str | None = None
     dataset_path: str | None = None
     dataset_name: str | None = None
+    dataset_id: str | None = None
+    active_dataset: bool = False
+    fingerprint: str | None = None
+    schema: list | None = None
+    summary: dict | None = None
     # Continuity fields read by build_analyst_state
     last_column: str | None = None
     last_columns: list | None = None
@@ -37,7 +42,6 @@ class SessionSnapshot:
     last_intent: str | None = None
     last_operation: str | None = None
     last_forecast_target: str | None = None
-    dataset_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -45,26 +49,41 @@ class SessionSnapshot:
 # ---------------------------------------------------------------------------
 
 
-def get_session_snapshot(session_id: str) -> SessionSnapshot | None:
-    """Read session fields from SessionService for state building."""
+def get_session_snapshot(session_id: str, user_id: str | None = None) -> SessionSnapshot | None:
+    """Read session fields from SessionService for state building (Phase 1)."""
     try:
         from backend.sessions.service import get_session_service
 
-        detail = get_session_service().get_session_detail(
-            session_id, include_deleted=False
+        svc = get_session_service()
+        try:
+            detail = svc.get_session_detail(session_id, user_id=user_id, include_deleted=False)
+        except Exception:
+            # Fallback for internal state building if user_id differs from owner
+            detail = svc.get_session_detail(session_id, include_deleted=False)
+
+        cur_ds = detail.get("current_dataset") or {}
+        has_active = bool(
+            detail.get("dataset_path")
+            or detail.get("dataset_url")
+            or detail.get("dataset_id")
+            or cur_ds.get("active_dataset")
         )
         return SessionSnapshot(
             dataset_topic=detail.get("dataset_topic") or None,
             dataset_url=detail.get("dataset_url") or None,
             dataset_path=detail.get("dataset_path") or None,
             dataset_name=detail.get("dataset_name") or None,
+            dataset_id=detail.get("dataset_id") or cur_ds.get("dataset_id") or None,
+            active_dataset=has_active,
+            fingerprint=detail.get("dataset_id") or cur_ds.get("fingerprint") or None,
+            schema=cur_ds.get("schema") or detail.get("last_columns") or None,
+            summary=cur_ds.get("summary") or None,
             last_column=detail.get("last_column") or None,
             last_columns=detail.get("last_columns") or None,
             last_chart_type=detail.get("last_chart_type") or None,
             last_intent=detail.get("last_intent") or None,
             last_operation=detail.get("last_operation") or None,
             last_forecast_target=detail.get("last_forecast_target") or None,
-            dataset_id=detail.get("dataset_id") or None,
         )
     except Exception:
         return None
@@ -235,7 +254,8 @@ def build_analyst_state(
             if bound_path and not str(bound_path).startswith(("http://", "https://"))
             else None
         ),
-        "has_active_dataset": dataset is not None or bool(bound_path or dataset_url or effective_file_path),
+        "has_active_dataset": dataset is not None or bool(bound_path or dataset_url or effective_file_path or getattr(session, "active_dataset", False)),
+        "active_dataset": dataset is not None or bool(bound_path or dataset_url or effective_file_path or getattr(session, "active_dataset", False)),
         "reuse_active_dataset": bool(reuse and not topic_mismatch),
         "topic_mismatch": topic_mismatch,
         "force_reload_dataset": topic_mismatch,
@@ -251,6 +271,9 @@ def build_analyst_state(
         "source": "session" if dataset is not None and not file_path else None,
         "focus_country": None,
         "dataset_id": getattr(session, "dataset_id", None) if session is not None else None,
+        "fingerprint": getattr(session, "fingerprint", None) or (getattr(session, "dataset_id", None) if session else None),
+        "schema": getattr(session, "schema", None) or (dataset.columns.tolist() if dataset is not None else []),
+        "summary": getattr(session, "summary", None) or {},
         "dataset_metadata": {},
         "retrieval_result": {},
         "acquisition_result": {},

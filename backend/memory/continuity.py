@@ -157,33 +157,28 @@ def is_new_dataset_topic(
     has_active_dataset: bool = False,
 ) -> bool:
     """
-    True when the user requests a *different dataset subject* than the bound session dataset.
-
-    Follow-up analytical operations (e.g. "show missing values", "describe dataset",
-    "summary statistics", "correlation matrix", "plot histogram", "average age")
-    return False so the active dataset is preserved.
+    Phase 1 — Session Single Source of Truth.
+    When a session has an active dataset:
+      - Explicit new topic request verbs + distinct new subject tokens return True (dataset switch).
+      - Follow-up analytical questions return False (reuses active dataset).
     """
     if not question or not question.strip():
         return False
 
     lowered = question.lower().strip()
-
     explicit_switch_verbs = (
-        "switch to", "load dataset", "open dataset", "fetch dataset", "use dataset",
-        "search dataset", "find dataset", "download dataset", "dataset about", "data on ",
-        "data about ", "import dataset", "load file", "open file"
+        "switch to", "load ", "open ", "fetch ", "use dataset",
+        "search dataset", "find dataset", "download ", "dataset about", "data on ",
+        "data about ", "import ", "load file", "open file", "analyze ", "analyse "
     )
-    is_explicit_switch = any(v in lowered for v in explicit_switch_verbs)
-    open_analyze = any(v in lowered for v in ("analyze ", "analyse ", "study ", "explore "))
 
     if has_active_dataset:
-        if is_follow_up_question(question) and not is_explicit_switch:
-            if open_analyze:
-                q_content = tokenize_content(question)
-                t_content = tokenize_content(active_topic)
-                if q_content and t_content and not (q_content & t_content):
-                    return True
-            return False
+        if any(v in lowered for v in explicit_switch_verbs):
+            q_tokens = tokenize_content(question)
+            t_tokens = tokenize_content(active_topic)
+            if q_tokens and t_tokens and not (q_tokens & t_tokens):
+                return True
+        return False
 
     q_tokens = tokenize_content(question)
     t_tokens = tokenize_content(active_topic)
@@ -192,18 +187,7 @@ def is_new_dataset_topic(
         return False
 
     if not t_tokens:
-        if has_active_dataset:
-            if is_follow_up_question(question):
-                return False
-            if not is_explicit_switch and not open_analyze:
-                return False
         return bool(q_tokens)
-
-    if q_tokens & t_tokens:
-        return False
-
-    if has_active_dataset and is_follow_up_question(question) and not is_explicit_switch:
-        return False
 
     return len(q_tokens & t_tokens) == 0
 
@@ -218,68 +202,31 @@ def should_reuse_session_dataset(
     file_path_override: str | None = None,
 ) -> tuple[bool, bool]:
     """
+    Phase 1 — Session is Single Source of Truth for Dataset Ownership.
+
     Returns (reuse, topic_mismatch).
-
-    reuse=True → inject path/frame and skip discovery/upload.
-
-    Critical: a client may still send the *old* upload path while asking about a
-    new subject (Upload GDP → "Analyze IPL"). That must set topic_mismatch=True
-    so callers strip file_path and run retrieval.
+    If a session has a bound dataset (path, url, or frame):
+      - If file_path_override is provided and points to a DIFFERENT file path than dataset_path:
+        Treat as a new file upload (reuse=False, topic_mismatch=True).
+      - If question requests an explicit dataset switch to a different subject:
+        Treat as a topic mismatch (reuse=False, topic_mismatch=True).
+      - Otherwise:
+        ALWAYS reuse the active session dataset (reuse=True, topic_mismatch=False).
     """
-    from pathlib import Path
-
-    def _path_tokens(p: str | None) -> set[str]:
-        if not p:
-            return set()
-        stem = Path(str(p).replace("\\", "/").split("/")[-1]).stem
-        return tokenize_content(stem.replace("_", " ").replace("-", " "))
-
-    # Active label = session topic + path stems (session + override)
-    active_label = " ".join(
-        filter(
-            None,
-            [
-                dataset_topic or "",
-                " ".join(_path_tokens(dataset_path)),
-                " ".join(_path_tokens(file_path_override)),
-            ],
-        )
-    )
-
-    if file_path_override:
-        # Does the question match this file? (new upload for the new topic)
-        q_tok = tokenize_content(question)
-        p_tok = _path_tokens(file_path_override)
-        if q_tok and p_tok and (q_tok & p_tok):
-            # e.g. uploaded ipl.csv + "Analyze IPL" → keep file
-            return False, False
-        # Does the question match the *session* topic/path (same dataset)?
-        s_tok = tokenize_content(dataset_topic) | _path_tokens(dataset_path)
-        if q_tok and s_tok and (q_tok & s_tok):
-            return False, False
-        # Question is a pure follow-up → keep bound file
-        if is_follow_up_question(question) and not is_new_dataset_topic(
-            question, active_label or dataset_topic, has_active_dataset=True
-        ):
-            return False, False
-        # Distinct subject vs bound file (GDP file + "Analyze IPL")
-        if is_new_dataset_topic(
-            question, active_label or dataset_topic or " ".join(p_tok), has_active_dataset=True
-        ):
-            return False, True
-        return False, False
-
     has_binding = bool(dataset_path or dataset_url or has_frame)
     if not has_binding:
         return False, False
 
-    mismatch = is_new_dataset_topic(
-        question,
-        active_label or dataset_topic,
-        has_active_dataset=has_binding,
-    )
-    if mismatch:
+    if file_path_override:
+        from pathlib import Path
+        p1 = str(Path(file_path_override).expanduser().resolve(strict=False))
+        p2 = str(Path(dataset_path).expanduser().resolve(strict=False)) if dataset_path else None
+        if p2 and p1 != p2:
+            return False, True
+
+    if is_new_dataset_topic(question, dataset_topic, has_active_dataset=has_binding):
         return False, True
+
     return True, False
 
 

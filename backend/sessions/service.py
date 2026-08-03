@@ -1716,6 +1716,9 @@ class SessionService:
             row.dataset_name = topic
 
         meta = result.get("dataset_metadata") or result.get("generated_metadata") or {}
+        cols = result.get("columns") or row.last_columns or []
+        rows_cnt = result.get("rows") or meta.get("row_count") or 0
+        has_active = bool(row.dataset_path or row.dataset_url or row.dataset_id)
         row.current_dataset = sanitize_for_json(
             {
                 "dataset_id": row.dataset_id,
@@ -1723,13 +1726,16 @@ class SessionService:
                 "dataset_path": row.dataset_path,
                 "dataset_url": row.dataset_url,
                 "dataset_topic": row.dataset_topic,
+                "active_dataset": has_active,
+                "fingerprint": row.dataset_id or result.get("dataset_fingerprint"),
+                "schema": cols,
+                "summary": result.get("dataset_profile") or meta.get("summary") or {},
                 "title": meta.get("title") or row.dataset_name,
                 "domain": meta.get("domain"),
                 "country": meta.get("country"),
                 "metrics": meta.get("metrics"),
-                "summary": meta.get("summary"),
-                "columns": result.get("columns") or row.last_columns or [],
-                "rows": result.get("rows") or meta.get("row_count") or 0,
+                "columns": cols,
+                "rows": rows_cnt,
                 "source": result.get("source") or result.get("dataset_source"),
             }
         )
