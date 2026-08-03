@@ -144,7 +144,6 @@ def conversation_context_agent(state):
             subject = summary[:80]
 
     resolved = None
-
     if lowered.strip() in EXACT_FOLLOW_UPS:
         resolved = EXACT_FOLLOW_UPS[lowered.strip()].format(subject=subject)
     else:
@@ -153,7 +152,6 @@ def conversation_context_agent(state):
                 resolved = template.format(subject=subject)
                 break
 
-    # "compare with China" — keep subject dataset, attach entity
     if resolved is None and re.search(r"\bcompare\s+with\b", lowered):
         rest = re.sub(r"^.*compare\s+with\s+", "", lowered).strip()
         if rest and subject not in {"the dataset", "the active dataset"}:
@@ -161,6 +159,30 @@ def conversation_context_agent(state):
 
     if resolved is None and _is_follow_up(question):
         resolved = _resolve_pronouns(question, subject)
+
+    from backend.utils.reference_resolver import resolve_question_references
+
+    has_active = state.get("data") is not None or bool(
+        state.get("dataset_path")
+        or state.get("file_path")
+        or state.get("local_path")
+        or state.get("dataset_url")
+    )
+
+    phase4_resolved = resolve_question_references(
+        question,
+        dataset_name=state.get("dataset_name"),
+        dataset_topic=state.get("dataset_topic") or subject,
+        last_chart=state.get("last_chart_type") or state.get("chart_type"),
+        last_chart_type=state.get("last_chart_type"),
+        last_operation=state.get("last_operation"),
+        last_column=state.get("last_column_used"),
+        columns=state.get("columns"),
+        has_active_dataset=has_active,
+    )
+
+    if phase4_resolved and phase4_resolved != question:
+        resolved = phase4_resolved
 
     if resolved and resolved != question:
         state["question"] = resolved
