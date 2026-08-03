@@ -18,6 +18,7 @@ def test_planner_uses_llm_planning_for_dataset_search(monkeypatch):
     monkeypatch.setattr(ollama_client, "invoke_llm", fake_invoke_llm)
     monkeypatch.setattr(intent_classifier, "invoke_llm", fake_invoke_llm)
     monkeypatch.setattr(planner_module, "invoke_llm", fake_invoke_llm)
+    monkeypatch.setattr(planner_module.settings, "USE_LLM_PLANNER", True)
 
     state = {
         "question": "Find a GDP dataset and visualize trends",

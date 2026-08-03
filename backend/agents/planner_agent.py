@@ -342,7 +342,7 @@ def _build_rule_based_plan(state, normalized, intents, dataset_requested):
         return plan
 
     # --- Forecasting ---
-    if "forecasting" in intents:
+    if "forecasting" in intents or "forecast" in intents:
         if not has_data and not dataset_requested and not state.get("dataset_url"):
             state["answer"] = (
                 "I could not determine which dataset to forecast. "
@@ -362,7 +362,7 @@ def _build_rule_based_plan(state, normalized, intents, dataset_requested):
         ]
 
     # --- Explicit visualization ---
-    if "visualization" in intents and "eda" not in intents and "dataset_autoload" not in intents:
+    if "visualization" in intents and "eda" not in intents and "dataset_autoload" not in intents and "dataset_switch" not in intents:
         if reuse and not rediscover:
             return [
                 "profile_data",
@@ -381,7 +381,7 @@ def _build_rule_based_plan(state, normalized, intents, dataset_requested):
         ]
 
     # --- Statistical QA ---
-    if "statistical_analysis" in intents and "eda" not in intents:
+    if ("statistical_analysis" in intents or "statistics" in intents) and "eda" not in intents:
         if reuse and not rediscover:
             return ["profile_data", "run_qa", "recommend_analysis", "generate_insight"]
         return _discovery_prefix(state, force=rediscover or not has_data) + [
@@ -407,7 +407,7 @@ def _build_rule_based_plan(state, normalized, intents, dataset_requested):
         plan.insert(-2, "run_viz")
 
     # Explicit forecasting alongside analysis of a new topic.
-    if "forecasting" in intents and "forecast_data" not in plan:
+    if ("forecasting" in intents or "forecast" in intents) and "forecast_data" not in plan:
         if "generate_insight" in plan:
             plan.insert(plan.index("generate_insight"), "forecast_data")
         else:
@@ -448,8 +448,8 @@ Dataset Name: {state.get("dataset_name")}
     dataset_requested = any(keyword in normalized for keyword in DATASET_KEYWORDS) or any(
         phrase in normalized for phrase in OPEN_WORLD_PHRASES
     )
-    # Open-world: dataset_autoload intent also means "go find public data".
-    if "dataset_autoload" in intents or "dataset_search" in intents:
+    # Open-world: dataset_autoload / dataset_switch intent also means "go find public data".
+    if "dataset_autoload" in intents or "dataset_search" in intents or "dataset_switch" in intents:
         dataset_requested = True
 
     dataset_available = bool(
@@ -468,13 +468,11 @@ Dataset Name: {state.get("dataset_name")}
     # Product default: deterministic rule-based plan first (reliable + fast).
     plan = _build_rule_based_plan(state, normalized, intents, dataset_requested)
 
-    # Opt-in LLM planner only when enabled and rules produced nothing usable.
-    if (
-        not plan
-        and not state.get("stop")
-        and bool(getattr(settings, "USE_LLM_PLANNER", False))
-    ):
-        plan = _build_llm_plan(question, dataset_available)
+    # Opt-in LLM planner when enabled in settings.
+    if bool(getattr(settings, "USE_LLM_PLANNER", False)) and not state.get("stop"):
+        llm_plan = _build_llm_plan(question, dataset_available)
+        if llm_plan:
+            plan = llm_plan
 
     # Ensure comparison is never dropped.
     comparison_requested = (
@@ -488,7 +486,7 @@ Dataset Name: {state.get("dataset_name")}
             plan.append("compare_datasets")
 
     # Ensure forecasting is never dropped when requested.
-    if "forecasting" in intents and "forecast_data" not in plan and not state.get("stop"):
+    if ("forecasting" in intents or "forecast" in intents) and "forecast_data" not in plan and not state.get("stop"):
         if "generate_insight" in plan:
             plan.insert(plan.index("generate_insight"), "forecast_data")
         else:

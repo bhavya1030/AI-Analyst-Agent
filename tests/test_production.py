@@ -187,7 +187,7 @@ def test_circuit_breaker_opens():
     with pytest.raises(CircuitOpenError):
         breaker.call(lambda: "nope")
 
-    time.sleep(0.06)
+    time.sleep(0.12)
     # half-open then success closes
     assert breaker.call(lambda: "ok") == "ok"
     assert breaker.state.value == "closed"

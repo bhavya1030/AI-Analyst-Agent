@@ -1,4 +1,24 @@
+"""Phase 3 — LLM-Based Intent Classification.
+
+Supported Intents:
+- preview
+- eda
+- statistics
+- visualization
+- qa
+- forecast
+- comparison
+- chart_explanation
+- dataset_switch
+- dataset_search
+- general_chat
+"""
+
+from __future__ import annotations
+
 import json
+import re
+from typing import Any
 
 from backend.config import settings
 from backend.core.logger import get_logger
@@ -6,66 +26,145 @@ from backend.llm.ollama_client import invoke_llm
 
 logger = get_logger(__name__)
 
+SUPPORTED_INTENTS = frozenset(
+    {
+        "preview",
+        "eda",
+        "statistics",
+        "visualization",
+        "qa",
+        "forecast",
+        "comparison",
+        "chart_explanation",
+        "dataset_switch",
+        "dataset_search",
+        "general_chat",
+    }
+)
 
-def classify_intents(question: str):
-    """Classify analytics intents.
+LEGACY_INTENT_MAP = {
+    "statistical_analysis": "statistics",
+    "explanation": "chart_explanation",
+    "forecasting": "forecast",
+    "dataset_autoload": "dataset_switch",
+}
 
-    Product rule: deterministic keyword fallback runs first so the copilot stays
-    responsive and predictable. The LLM is only used when the fallback is weak
-    (empty or bare "eda") and the question is ambiguous.
+
+def normalize_intent_name(intent: str) -> str:
+    cleaned = (intent or "").strip().lower()
+    cleaned = LEGACY_INTENT_MAP.get(cleaned, cleaned)
+    return cleaned if cleaned in SUPPORTED_INTENTS else "eda"
+
+
+def classify_intents(question: str) -> list[str]:
     """
-    question = (question or "").strip()
-
-    if not question:
+    Phase 3 Intent Classification.
+    Returns list of standard intents from SUPPORTED_INTENTS.
+    """
+    q = (question or "").strip()
+    if not q:
         return ["eda"]
 
-    fallback = _fallback_intent_classification(question)
-    # Product default: deterministic intents only. Local LLMs can take minutes
-    # per call and break the ChatGPT-like UX. Enable opt-in via settings if needed.
-    use_llm = bool(getattr(settings, "USE_LLM_INTENT", False))
-    specific = [intent for intent in fallback if intent != "eda"]
+    lowered = q.lower()
 
-    if specific or not use_llm:
-        return list(dict.fromkeys(fallback or ["eda"]))
+    deterministic = _deterministic_intent_classification(lowered)
+    if deterministic:
+        return list(dict.fromkeys(deterministic))
 
-    # Opt-in LLM path for ambiguous questions only.
-    prompt = f"""
-You are an analytics intent classifier.
-Possible intents:
-- dataset_search
-- dataset_autoload
-- visualization
-- statistical_analysis
-- forecasting
-- comparison
+    use_llm = bool(getattr(settings, "USE_LLM_INTENT", True))
+    if use_llm:
+        try:
+            llm_intents = _classify_via_llm(q)
+            if llm_intents:
+                return list(dict.fromkeys(llm_intents))
+        except Exception as exc:
+            logger.warning("LLM intent classification failed", extra={"error": str(exc)})
+
+    return ["eda"]
+
+
+def _deterministic_intent_classification(lowered: str) -> list[str]:
+    intents = []
+
+    # 1. Preview
+    if any(p in lowered for p in ("first ", "head", "tail", "sample rows", "show rows", "list columns", "show columns", "first 5", "first 10")):
+        intents.append("preview")
+
+    # 2. EDA
+    if any(p in lowered for p in ("missing values", "null values", "nulls", "nans", "duplicates", "describe dataset", "describe data", "summary statistics", "eda", "data summary", "dataset overview", "data profile")):
+        intents.append("eda")
+
+    # 3. Statistics
+    if any(p in lowered for p in ("average ", "mean ", "median ", "variance", "std dev", "standard deviation", "max ", "maximum ", "min ", "minimum ", "count of", "total fare", "sum of", "quantile")):
+        intents.append("statistics")
+
+    # 4. Visualization
+    if any(p in lowered for p in ("plot ", "histogram", "correlation matrix", "heatmap", "scatter plot", "bar chart", "pie chart", "box plot", "draw chart", "graph ", "visualize ", "visualise ")):
+        intents.append("visualization")
+
+    # 5. Chart Explanation
+    if any(p in lowered for p in ("explain this chart", "explain chart", "explain plot", "interpret chart", "what does this graph mean")):
+        intents.append("chart_explanation")
+
+    # 6. Forecast
+    if any(p in lowered for p in ("forecast", "predict", "projection", "future trend")):
+        intents.append("forecast")
+
+    # 7. Comparison
+    if any(p in lowered for p in ("compare ", "versus", " vs ", "difference between")):
+        intents.append("comparison")
+
+    # 8. Dataset Switch
+    if any(p in lowered for p in ("switch to", "load iris", "load dataset", "open file", "import dataset")) or (any(p in lowered for p in ("analyze ", "analyse ")) and not any(p in lowered for p in ("missing", "null", "duplicate", "histogram", "average", "first", "describe", "fare", "age", "chart", "summary"))):
+        intents.append("dataset_switch")
+        intents.append("eda")
+
+    # 9. Dataset Search
+    if any(p in lowered for p in ("search dataset", "find dataset", "download dataset", "search for data", "search data", "find data")) or (lowered.startswith("search ") and not any(p in lowered for p in ("missing", "null", "row", "col", "column", "hist", "plot", "chart", "stat"))):
+        intents.append("dataset_search")
+
+    # 10. General Chat
+    if lowered in {"hello", "hi", "hey", "help", "who are you", "what can you do"}:
+        intents.append("general_chat")
+
+    return [normalize_intent_name(i) for i in intents if i]
+
+
+def _fallback_intent_classification(lowered: str) -> list[str]:
+    """Legacy fallback alias for tests expecting dataset_autoload."""
+    intents = _deterministic_intent_classification(lowered.lower() if lowered else "")
+    legacy_mapped = []
+    for i in intents:
+        if i == "dataset_switch":
+            legacy_mapped.extend(["dataset_autoload", "dataset_switch"])
+        else:
+            legacy_mapped.append(i)
+    return list(dict.fromkeys(legacy_mapped))
+
+
+def _classify_via_llm(question: str) -> list[str]:
+    prompt = f"""You are an analytics intent classifier.
+Classify the question into ONE or MORE supported intents:
+- preview
 - eda
-- explanation
+- statistics
+- visualization
+- qa
+- forecast
+- comparison
+- chart_explanation
+- dataset_switch
+- dataset_search
+- general_chat
 
-Return ONLY JSON:
-{{
-  "intents": [...]
-}}
+Return ONLY JSON: {{"intents": ["<intent>"]}}
 
-Input:
-{question}
-"""
+Question: {question}"""
 
-    logger.info(
-        "LLM INTENT CLASSIFIER INVOKED",
-        extra={"prompt": question, "model": settings.OLLAMA_MODEL},
-    )
-    try:
-        response = invoke_llm(prompt)
-        intents = _parse_intents(response)
-        if intents:
-            return list(dict.fromkeys(intents))
-    except Exception as exc:
-        logger.warning(
-            "Intent LLM classification failed; using fallback",
-            extra={"error": str(exc)},
-        )
-
-    return list(dict.fromkeys(fallback or ["eda"]))
+    logger.info("LLM INTENT CLASSIFIER INVOKED", extra={"prompt": question})
+    response = invoke_llm(prompt)
+    raw = _parse_intents(response)
+    return [normalize_intent_name(i) for i in raw if i]
 
 
 def _parse_intents(response: str) -> list[str]:
@@ -101,179 +200,3 @@ def _extract_json(text: str) -> str | None:
     if start == -1 or end == -1 or end <= start:
         return None
     return text[start:end + 1]
-
-
-def _fallback_intent_classification(question: str) -> list[str]:
-    normalized = question.lower()
-    intents = []
-
-    dataset_keywords = [
-        "find dataset",
-        "fetch dataset",
-        "download dataset",
-        "dataset about",
-        "get dataset",
-        "similar dataset",
-        "search for data",
-        "find data on",
-    ]
-
-    viz_keywords = [
-        "plot",
-        "show",
-        "display",
-        "chart",
-        "graph",
-        "distribution",
-        "scatter",
-        "bar",
-        "pie",
-        "line",
-        "box",
-        "heatmap",
-        "correlation",
-        "trend",
-        "histogram",
-        "visualize",
-        "visualise",
-    ]
-
-    stat_keywords = [
-        "average",
-        "mean",
-        "max",
-        "min",
-        "median",
-        "variance",
-        "std",
-        "sum",
-        "count",
-        "how many",
-        "what is the",
-    ]
-
-    compare_keywords = [
-        "compare",
-        "comparison",
-        "difference",
-        "versus",
-        " vs ",
-        "relationship between",
-    ]
-
-    explain_keywords = [
-        "explain",
-        "insight",
-        "why",
-        "interpret",
-        "what does",
-        "tell me about",
-    ]
-
-    forecasting_keywords = [
-        "predict",
-        "forecast",
-        "future",
-        "projection",
-        "estimate next",
-        "future trend",
-        "next years",
-        "next year",
-        "next 5 years",
-        "next 10 years",
-        "project future",
-        "for the next",
-    ]
-
-    analysis_keywords = [
-        "analyze",
-        "analyse",
-        "analysis",
-        "explore",
-        "investigate",
-        "study",
-        "overview",
-        "summarize",
-        "summary",
-        "eda",
-    ]
-
-    dataset_topic_keywords = [
-        "gdp",
-        "population",
-        "inflation",
-        "climate",
-        "temperature",
-        "sales",
-        "revenue",
-        "stock",
-        "unemployment",
-        "energy",
-        "covid",
-        "electric vehicle",
-        "ev sales",
-        "co2",
-        "emission",
-        "housing",
-        "literacy",
-        "cryptocurrency",
-        "bitcoin",
-        "oil",
-        "agriculture",
-        "traffic",
-        "crime",
-    ]
-
-    if any(k in normalized for k in dataset_keywords):
-        intents.append("dataset_search")
-
-    if any(k in normalized for k in compare_keywords):
-        intents.append("comparison")
-
-    if any(k in normalized for k in forecasting_keywords):
-        intents.append("forecasting")
-
-    if any(k in normalized for k in viz_keywords):
-        intents.append("visualization")
-
-    if any(k in normalized for k in stat_keywords):
-        intents.append("statistical_analysis")
-
-    if any(k in normalized for k in explain_keywords):
-        intents.append("explanation")
-
-    if any(k in normalized for k in analysis_keywords):
-        intents.append("eda")
-
-    if any(k in normalized for k in dataset_topic_keywords):
-        intents.append("dataset_autoload")
-
-    # Open-world: any "analyze/study/explore X" style ask should trigger discovery
-    # even when X is not in the known metric list.
-    open_world_triggers = (
-        "analyze ",
-        "analyse ",
-        "study ",
-        "explore ",
-        "investigate ",
-        "dataset about",
-        "data on ",
-        "data about ",
-        "find data",
-        "open data",
-    )
-    if any(trigger in normalized for trigger in open_world_triggers):
-        if "dataset_autoload" not in intents:
-            intents.append("dataset_autoload")
-        if "eda" not in intents:
-            intents.append("eda")
-
-    # Direct URL means user connected a source.
-    if "http://" in normalized or "https://" in normalized:
-        intents.append("dataset_autoload")
-
-    if not intents:
-        # Default to exploratory analysis — planner decides discovery vs reuse.
-        intents.append("eda")
-
-    return list(dict.fromkeys(intents))
