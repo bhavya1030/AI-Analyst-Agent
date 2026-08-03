@@ -263,6 +263,31 @@ def switch_session(
         return _server_error("Unable to switch session", "SESSION_SWITCH_FAILED", str(exc))
 
 
+@router.post("/sessions/{session_id}/reset")
+@router.post("/v1/sessions/{session_id}/reset")
+def reset_session_endpoint(
+    session_id: str,
+    user: AuthUser = Depends(get_current_user),
+):
+    """Phase 2: Reset session dataset, planner state, and memory hierarchy."""
+    try:
+        svc = get_session_service()
+        res = svc.reset_session(session_id, user_id=user.user_id)
+        return sanitize_for_json(res)
+    except SessionAccessDenied:
+        return _forbidden(session_id, user.user_id)
+    except SessionNotFoundError as exc:
+        return _not_found(exc.session_id)
+    except Exception as exc:
+        logger.error(
+            "Session reset failed",
+            extra={"error": str(exc), "session_id": session_id},
+        )
+        return _server_error(
+            "Unable to reset session", "SESSION_RESET_FAILED", str(exc)
+        )
+
+
 @router.post("/sessions/import", status_code=201)
 @router.post("/v1/sessions/import", status_code=201)
 def import_session(

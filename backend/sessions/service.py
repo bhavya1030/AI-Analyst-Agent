@@ -681,6 +681,87 @@ class SessionService:
         finally:
             db.close()
 
+    def reset_session(
+        self, session_id: str, *, user_id: str | None = None
+    ) -> dict[str, Any]:
+        """
+        Phase 2 — New Chat Lifecycle Backend Reset.
+        Clears:
+          - active dataset properties (dataset_id, dataset_name, dataset_path, dataset_url, dataset_topic, current_dataset)
+          - planner state & continuity fields (last_column, last_columns, last_chart_type, last_intent, last_operation, eda_summary)
+          - cached dataset state
+          - memory hierarchy for dataset
+        """
+        ensure_session_tables()
+        sid = (session_id or "").strip()
+        owner = (user_id or "anonymous").strip() or "anonymous"
+
+        with session_lock(sid):
+            db = SessionLocal()
+            try:
+                row = self._require_row(db, sid, user_id=owner, allow_deleted=False)
+                row.dataset_id = None
+                row.dataset_name = None
+                row.dataset_path = None
+                row.dataset_url = None
+                row.dataset_topic = None
+                row.current_dataset = None
+                row.last_column = None
+                row.last_columns = None
+                row.last_chart_type = None
+                row.last_intent = None
+                row.last_operation = None
+                row.last_forecast_target = None
+                row.last_query = None
+                row.last_insight = None
+                row.eda_summary = None
+                row.memory_state = None
+                row.updated_at = _utcnow()
+                db.commit()
+                db.refresh(row)
+            finally:
+                db.close()
+
+        # Clear checkpoint store for session
+        try:
+            from backend.graph.checkpoint_service import get_checkpoint_service
+
+            get_checkpoint_service().clear_checkpoint(sid)
+        except Exception as exc:
+            logger.warning(
+                "Reset session checkpoint clear skipped",
+                extra={"session_id": sid, "error": str(exc)},
+            )
+
+        # Clear ask & analysis caches for session
+        try:
+            from backend.cache.ask_cache import get_ask_cache
+
+            get_ask_cache().invalidate_session(sid)
+        except Exception as exc:
+            logger.warning(
+                "Reset session cache clear skipped",
+                extra={"session_id": sid, "error": str(exc)},
+            )
+
+        # Clear memory hierarchy for session
+        try:
+            from backend.memory.hierarchy import MemoryHierarchyService
+
+            MemoryHierarchyService().clear_session_memory(sid)
+        except Exception as exc:
+            logger.warning(
+                "Reset session memory clear skipped",
+                extra={"session_id": sid, "error": str(exc)},
+            )
+
+        self._reindex(sid)
+        return {
+            "session_id": sid,
+            "reset": True,
+            "message": "Session dataset, planner state, and memory cleared",
+        }
+
     # ------------------------------------------------------------------
     # Phase 3 — lifecycle & organization
     # ------------------------------------------------------------------

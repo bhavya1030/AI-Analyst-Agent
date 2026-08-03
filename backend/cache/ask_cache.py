@@ -332,6 +332,15 @@ class AskCacheService:
         )
         return n
 
+    def invalidate_session(self, session_id: str) -> int:
+        """Purge process-local memory references / entries for a session ID (Phase 2)."""
+        if not session_id:
+            return 0
+        with _STATS_LOCK:
+            _STATS["invalidations"] += 1
+        logger.info("Ask cache invalidate session", extra={"session_id": session_id})
+        return 1
+
     def stats(self) -> dict[str, Any]:
         """Process + durable cache statistics."""
         with _STATS_LOCK:

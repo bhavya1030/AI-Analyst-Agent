@@ -91,6 +91,19 @@ class MemoryHierarchyService:
                     extra={"error": str(exc)},
                 )
 
+    def clear_session_memory(self, session_id: str) -> None:
+        """Clear Level-2 session memory blob for session reset (Phase 2)."""
+        try:
+            from backend.sessions.service import get_session_service
+
+            svc = get_session_service()
+            svc.update_session(session_id, memory_state={})
+        except Exception as exc:
+            logger.debug(
+                "Clear session memory blob skipped",
+                extra={"session_id": session_id, "error": str(exc)},
+            )
+
     # ------------------------------------------------------------------
     # Load
     # ------------------------------------------------------------------

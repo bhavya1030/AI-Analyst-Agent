@@ -537,8 +537,6 @@ export const useChatStore = create<ChatStore>()(
 
         const created = await apiCreateSession({
           title: "New analysis",
-          dataset_name: state.datasetName || undefined,
-          dataset_path: state.filePath || undefined,
         });
         const newId = created?.session_id || `session-${Date.now()}`;
 
@@ -555,8 +553,9 @@ export const useChatStore = create<ChatStore>()(
           hypotheses: [],
           activeAssistantId: null,
           loading: false,
-          datasetName: state.datasetName,
-          filePath: state.filePath,
+          datasetName: "",
+          filePath: "",
+          pendingRequestId: null,
         });
 
         void get().refreshRemoteSessions();
