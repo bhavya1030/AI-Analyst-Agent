@@ -417,6 +417,16 @@ def _build_rule_based_plan(state, normalized, intents, dataset_requested):
 
 
 def planner_agent(state):
+    print(f"""==================================================
+PLANNER INPUT
+Question: {state.get("question")}
+Intent: {state.get("last_intent") or state.get("intent")}
+Dataset Topic: {state.get("dataset_topic")}
+Active Dataset: {state.get("dataset_name") or state.get("dataset_topic")}
+Dataset Path: {state.get("dataset_path") or state.get("file_path") or state.get("local_path")}
+Dataset Name: {state.get("dataset_name")}
+==================================================""", flush=True)
+
     question = (state.get("question") or "").strip()
     normalized = question.lower()
 

@@ -10,33 +10,72 @@ import re
 from typing import Any, Optional
 
 # Tokens that describe *what to do* with data, not *which dataset*.
+# Tokens that describe *what to do* with data, not *which dataset*.
 OPERATION_TOKENS = frozenset(
     {
-        "show", "plot", "chart", "graph", "visualize", "visualise", "draw",
-        "histogram", "hist", "bar", "line", "scatter", "box", "heatmap",
-        "correlation", "correlate", "corr", "distribution", "density",
+        # Data Quality, Structure & Inspection
+        "show", "plot", "chart", "graph", "visualize", "visualise", "draw", "display", "render",
+        "missing", "null", "nulls", "nan", "nans", "na", "duplicate", "duplicates", "shape", "head", "tail",
+        "column", "columns", "dtype", "dtypes", "types", "info", "unique", "uniques", "structure", "schema",
+        "raw", "clean", "cleaned", "cleaning",
+        # Summary & Descriptive Statistics
+        "describe", "summary", "stats", "statistics", "overview", "mean", "median", "mode",
+        "average", "avg", "min", "minimum", "max", "maximum", "std", "variance", "var",
+        "count", "sum", "total", "quantile", "percentile", "skew", "kurtosis",
+        # EDA & Analytical Patterns
+        "eda", "exploration", "analysis", "analyze", "analyse", "inspect", "examine",
+        "investigate", "study", "insight", "insights", "pattern", "patterns", "outlier",
+        "outliers", "cluster", "clusters", "clustering", "correlation", "correlate",
+        "corr", "covariation", "covariance", "importance", "relation", "relationship",
+        # Visualization Types
+        "histogram", "hist", "bar", "line", "scatter", "box", "boxplot", "pie", "heatmap",
+        "distribution", "density", "matrix", "figure", "fig",
+        # Forecasting & Trends
         "forecast", "predict", "projection", "trend", "trends",
-        "compare", "comparison", "versus", "vs",
-        "analyze", "analyse", "analysis", "summarize", "summarise", "summary",
-        "describe", "explain", "insight", "insights", "eda",
-        "mean", "median", "std", "average", "max", "min", "count",
-        "filter", "group", "by", "top", "bottom", "rank",
-        "again", "another", "same", "more", "please", "help",
-        "next", "previous", "past", "last", "years", "year", "months",
-        "the", "a", "an", "and", "or", "of", "for", "to", "in", "on", "with",
-        "from", "it", "this", "that", "them", "those", "data", "dataset",
-        "column", "columns", "variable", "variables", "value", "values",
-        "using", "use", "make", "create", "generate", "give", "display",
-        "rate", "rates", "price", "prices", "over", "time", "series",
+        # Comparison, Filtering & Operations
+        "compare", "comparison", "versus", "vs", "filter", "group", "groupby", "by", "top",
+        "bottom", "rank", "slice", "sort", "order",
+        # Language Stopwords & Data References
+        "again", "another", "same", "more", "please", "help", "next", "previous", "past",
+        "last", "years", "year", "months", "the", "a", "an", "and", "or", "of", "for",
+        "to", "in", "on", "with", "from", "it", "this", "that", "them", "those", "data",
+        "dataset", "file", "csv", "excel", "table", "frame", "dataframe", "row", "rows",
+        "variable", "variables", "value", "values", "using", "use", "make", "create",
+        "generate", "give", "rate", "rates", "price", "prices", "over", "time", "series",
     }
 )
 
 FOLLOW_UP_PHRASES = (
-    "show histogram",
-    "histogram",
-    "show correlation",
+    "show missing values",
+    "missing values",
+    "null values",
+    "show duplicates",
+    "duplicates",
+    "describe dataset",
+    "describe data",
+    "describe",
+    "summary statistics",
+    "summary",
+    "correlation matrix",
     "correlation",
     "heatmap",
+    "plot histogram",
+    "histogram",
+    "bar chart",
+    "scatter plot",
+    "pie chart",
+    "box plot",
+    "distribution",
+    "average",
+    "mean",
+    "median",
+    "count",
+    "data types",
+    "columns",
+    "unique values",
+    "outliers",
+    "clusters",
+    "feature importance",
     "forecast",
     "predict",
     "forecast it",
@@ -55,7 +94,6 @@ FOLLOW_UP_PHRASES = (
     "the data",
     "again",
     "another chart",
-    "distribution",
 )
 
 PRONOUN_RE = re.compile(
@@ -73,19 +111,42 @@ def tokenize_content(text: str | None) -> set[str]:
 
 
 def is_follow_up_question(question: str | None) -> bool:
-    """True for operation-only / pronoun follow-ups that keep the active dataset."""
+    """True for analytical operations, data inspection, or pronoun follow-ups that keep active dataset."""
     q = (question or "").strip().lower()
     if not q:
         return False
+
+    # Open-world analyze verbs with distinct subjects (e.g. "analyze gold prices") are not follow-ups
+    open_world_verbs = (
+        "analyze ", "analyse ", "study ", "explore ", "dataset about", "data on ", "data about ",
+        "load dataset", "switch to", "open dataset", "fetch dataset", "use dataset", "search dataset",
+        "find dataset", "download dataset", "search for data", "get dataset", "import dataset"
+    )
+
     if any(p in q for p in FOLLOW_UP_PHRASES):
-        # Still a follow-up even if also names a country for compare-with
-        return True
+        if not any(v in q for v in open_world_verbs):
+            return True
+
     if PRONOUN_RE.search(q) and len(q.split()) <= 14:
         return True
-    # Short questions with only operation tokens
+
     content = tokenize_content(q)
-    if not content and len(q.split()) <= 8:
-        return True
+    if not content and len(q.split()) <= 10:
+        if not any(v in q for v in open_world_verbs):
+            return True
+
+    # High ratio of operation / analytical tokens when no new subject is present
+    words = [w for w in re.findall(r"[a-z0-9]+", q) if len(w) > 1]
+    if words and not content:
+        op_count = sum(
+            1
+            for w in words
+            if w in OPERATION_TOKENS or w in {"show", "values", "value", "data", "dataset"}
+        )
+        if (op_count / len(words)) >= 0.5:
+            if not any(v in q for v in open_world_verbs):
+                return True
+
     return False
 
 
@@ -96,69 +157,54 @@ def is_new_dataset_topic(
     has_active_dataset: bool = False,
 ) -> bool:
     """
-    True when the user names a *different dataset subject* than the session.
+    True when the user requests a *different dataset subject* than the bound session dataset.
 
-    Follow-ups like "show histogram", "forecast", "correlation" return False
-    so we keep the bound dataset.
+    Follow-up analytical operations (e.g. "show missing values", "describe dataset",
+    "summary statistics", "correlation matrix", "plot histogram", "average age")
+    return False so the active dataset is preserved.
     """
     if not question or not question.strip():
         return False
 
-    # Explicit follow-up / operation → keep session dataset
-    if has_active_dataset and is_follow_up_question(question):
-        # Exception: "analyze gold" while session is GDP — content tokens differ
-        q_content = tokenize_content(question)
-        t_content = tokenize_content(active_topic)
-        if not t_content:
-            # Follow-up with no prior topic name still reuses data if bound
+    lowered = question.lower().strip()
+
+    explicit_switch_verbs = (
+        "switch to", "load dataset", "open dataset", "fetch dataset", "use dataset",
+        "search dataset", "find dataset", "download dataset", "dataset about", "data on ",
+        "data about ", "import dataset", "load file", "open file"
+    )
+    is_explicit_switch = any(v in lowered for v in explicit_switch_verbs)
+    open_analyze = any(v in lowered for v in ("analyze ", "analyse ", "study ", "explore "))
+
+    if has_active_dataset:
+        if is_follow_up_question(question) and not is_explicit_switch:
+            if open_analyze:
+                q_content = tokenize_content(question)
+                t_content = tokenize_content(active_topic)
+                if q_content and t_content and not (q_content & t_content):
+                    return True
             return False
-        if not q_content:
-            return False
-        # "compare with China" adds country but keeps metric topic
-        if q_content & t_content:
-            return False
-        # Pure follow-up phrases with extra country words (compare with China)
-        lowered = question.lower()
-        if any(
-            p in lowered
-            for p in (
-                "compare with",
-                "compare to",
-                " vs ",
-                "versus",
-                "histogram",
-                "correlation",
-                "heatmap",
-                "forecast",
-                "predict",
-                "distribution",
-                "scatter",
-            )
-        ):
-            return False
-        # Distinct subject nouns with open-world analyze verbs → new topic
-        if any(
-            v in lowered
-            for v in ("analyze ", "analyse ", "study ", "explore ", "dataset about")
-        ):
-            return True
-        # Default for content-only questions with no topic overlap
-        return True
 
     q_tokens = tokenize_content(question)
     t_tokens = tokenize_content(active_topic)
+
     if not q_tokens:
         return False
+
     if not t_tokens:
-        # Session has data path but no topic label — only new if question looks like discovery
-        lowered = (question or "").lower()
-        if has_active_dataset and is_follow_up_question(question):
-            return False
-        if has_active_dataset and not any(
-            p in lowered for p in ("analyze ", "analyse ", "study ", "explore ", "find data")
-        ):
-            return False
+        if has_active_dataset:
+            if is_follow_up_question(question):
+                return False
+            if not is_explicit_switch and not open_analyze:
+                return False
         return bool(q_tokens)
+
+    if q_tokens & t_tokens:
+        return False
+
+    if has_active_dataset and is_follow_up_question(question) and not is_explicit_switch:
+        return False
+
     return len(q_tokens & t_tokens) == 0
 
 

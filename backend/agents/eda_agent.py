@@ -88,4 +88,13 @@ eda_service = EDAService()
 
 
 def eda_agent(state: dict) -> dict:
+    df_in = state.get("data")
+    print(f"""==================================================
+ANALYSIS INPUT
+Question: {state.get("question")}
+Dataset Name: {state.get("dataset_name") or state.get("dataset_topic")}
+Dataset Path: {state.get("dataset_path") or state.get("file_path") or state.get("local_path")}
+Rows: {df_in.shape[0] if df_in is not None else 0}
+Columns: {df_in.columns.tolist() if df_in is not None else []}
+==================================================""", flush=True)
     return eda_service.run(state)

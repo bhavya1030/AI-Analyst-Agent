@@ -14,6 +14,21 @@ logger = get_logger(__name__)
 
 def dataset_retrieve_agent(state):
     """Resolve topic and run Dataset Retrieval Agent → state['retrieval_result']."""
+    if state.get("data") is None and not (state.get("file_path") or state.get("dataset_path") or state.get("dataset_url")):
+        retrieval_reason = "No active dataset"
+    elif state.get("topic_mismatch") or state.get("force_reload_dataset"):
+        retrieval_reason = "Forced discovery"
+    else:
+        retrieval_reason = "Open-world request"
+
+    print(f"""==================================================
+RETRIEVAL START
+Reason: {retrieval_reason}
+Question: {state.get("question")}
+Topic: {state.get("dataset_topic")}
+Active Dataset: {state.get("dataset_name") or state.get("dataset_topic")}
+==================================================""", flush=True)
+
     # Ensure we have a topic string for retrieval
     topic = (state.get("dataset_topic") or "").strip()
     if not topic:

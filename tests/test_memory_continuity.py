@@ -296,3 +296,109 @@ def test_conversation_continuity_end_to_end(tmp_path: Path):
     assert "load_data" not in plan
     assert "dataset_search_agent" not in plan
     assert "retrieve_dataset" not in plan
+
+
+def test_titanic_analytical_followups_reuse_active_dataset(tmp_path: Path):
+    """
+    Regression test: Analytical follow-up questions on an active Titanic dataset MUST reuse
+    the dataset without clearing state or calling retrieval.
+    """
+    p = tmp_path / "titanic.csv"
+    p.write_text(
+        "PassengerId,Survived,Pclass,Name,Sex,Age,Fare\n"
+        "1,0,3,Braund,male,22,7.25\n"
+        "2,1,1,Cumings,female,38,71.28\n"
+        "3,1,3,Heikkinen,female,26,7.925\n",
+        encoding="utf-8",
+    )
+
+    class Session:
+        dataset_path = str(p)
+        dataset_url = None
+        dataset_topic = "titanic"
+        dataset_name = "titanic.csv"
+        dataset_id = "ds-titanic"
+        last_column = "Fare"
+        last_columns = ["Age", "Fare"]
+        last_chart_type = "histogram"
+        last_intent = "analysis"
+        last_operation = "eda"
+        last_forecast_target = None
+
+    s = Session()
+    df = pd.read_csv(p)
+
+    followups = [
+        "show missing values",
+        "describe dataset",
+        "summary statistics",
+        "plot histogram",
+        "correlation matrix",
+        "average fare",
+        "show duplicates",
+    ]
+
+    for q in followups:
+        reuse, mismatch = should_reuse_session_dataset(
+            question=q,
+            dataset_topic=s.dataset_topic,
+            dataset_path=s.dataset_path,
+            dataset_url=s.dataset_url,
+            has_frame=True,
+        )
+        assert reuse is True, f"Failed reuse=True for '{q}'"
+        assert mismatch is False, f"Failed mismatch=False for '{q}'"
+
+        state = _build_state(s, question=q, file_path=None)
+        assert state["topic_mismatch"] is False, f"State topic_mismatch failed for '{q}'"
+        assert state["reuse_active_dataset"] is True, f"State reuse_active_dataset failed for '{q}'"
+        assert state["has_active_dataset"] is True, f"State has_active_dataset failed for '{q}'"
+        assert state["dataset_path"] == str(p), f"Dataset path dropped for '{q}'"
+        assert state["data"] is not None, f"DataFrame dropped for '{q}'"
+
+        state = planner_agent(state)
+        plan = state.get("plan") or []
+
+        assert "retrieve_dataset" not in plan, f"Retrieval erroneously planned for '{q}'"
+        assert "dataset_search_agent" not in plan, f"Search erroneously planned for '{q}'"
+        assert "fetch_data" not in plan, f"Fetch erroneously planned for '{q}'"
+
+
+def test_legitimate_topic_switches(tmp_path: Path):
+    """
+    Regression test: Explicit requests for a NEW dataset MUST trigger topic mismatch and retrieval.
+    """
+    p = tmp_path / "titanic.csv"
+
+    class Session:
+        dataset_path = str(p)
+        dataset_url = None
+        dataset_topic = "titanic"
+        dataset_name = "titanic.csv"
+        dataset_id = "ds-titanic"
+        last_column = None
+        last_columns = []
+        last_chart_type = None
+        last_intent = None
+        last_operation = None
+        last_forecast_target = None
+
+    s = Session()
+
+    switches = [
+        "Analyze gold prices",
+        "Analyze IPL dataset",
+        "Load GDP dataset",
+        "Switch to COVID dataset",
+    ]
+
+    for q in switches:
+        reuse, mismatch = should_reuse_session_dataset(
+            question=q,
+            dataset_topic=s.dataset_topic,
+            dataset_path=s.dataset_path,
+            dataset_url=s.dataset_url,
+            has_frame=True,
+        )
+        assert reuse is False, f"Expected reuse=False for topic switch '{q}'"
+        assert mismatch is True, f"Expected mismatch=True for topic switch '{q}'"

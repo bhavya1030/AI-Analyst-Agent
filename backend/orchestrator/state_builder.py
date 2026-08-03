@@ -199,7 +199,7 @@ def build_analyst_state(
             topic_mismatch = False
 
     bound_path = None if effective_file_path else dataset_path
-    return {
+    state = {
         "data": dataset,
         "last_column_used": getattr(session, "last_column", None) if session is not None else None,
         "last_columns_used": (getattr(session, "last_columns", None) or []) if session is not None else [],
@@ -266,6 +266,19 @@ def build_analyst_state(
         "selected_columns": (getattr(session, "last_columns", None) or []) if session is not None else [],
         "filters": [],
     }
+
+    print(f"""==================================================
+STATE BUILT
+Question: {question}
+Intent: {getattr(session, "last_intent", None) if session else None}
+Dataset Topic: {dataset_topic}
+Active Dataset: {getattr(session, "dataset_name", None) or dataset_topic if session else dataset_topic}
+Dataset Path: {bound_path or effective_file_path}
+Dataset Name: {getattr(session, "dataset_name", None) if session else None}
+Fingerprint: {getattr(session, "dataset_id", None) if session else None}
+==================================================""", flush=True)
+
+    return state
 
 
 def _question_is_new_topic(

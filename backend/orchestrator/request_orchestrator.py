@@ -230,6 +230,13 @@ class RequestOrchestrator:
         )
 
         ask_t0 = _time.perf_counter()
+        print(f"""==================================================
+ASK REQUEST
+Question: {question}
+Session ID: {session_id}
+User ID: {user_id}
+==================================================""", flush=True)
+
         with pipeline_timer(session_id=session_id, question=(question or "")[:120]) as timer:
             session_svc = get_session_service()
             memory_svc = get_memory_hierarchy()
@@ -263,6 +270,16 @@ class RequestOrchestrator:
 
             with time_stage("session"):
                 session = get_session_snapshot(session_id)
+
+            print(f"""==================================================
+SESSION LOADED
+Session ID: {session_id}
+Active Dataset: {getattr(session, "dataset_topic", None) if session else None}
+Dataset Path: {getattr(session, "dataset_path", None) if session else None}
+Dataset Name: {getattr(session, "dataset_name", None) if session else None}
+Fingerprint: {getattr(session, "dataset_id", None) if session else None}
+Checkpoint ID: None
+==================================================""", flush=True)
 
             # --- Topic switch: release stale upload even if client still sends it ---
             topic_switch = False
@@ -540,6 +557,16 @@ class RequestOrchestrator:
                     "Checkpoint restore skipped on ask",
                     extra={"session_id": session_id, "error": str(ckpt_exc)},
                 )
+
+            print(f"""==================================================
+BEFORE PLANNER
+Question: {state.get("question")}
+Intent: {state.get("last_intent") or state.get("intent")}
+Dataset Topic: {state.get("dataset_topic")}
+Active Dataset: {state.get("dataset_name") or state.get("dataset_topic")}
+Dataset Path: {state.get("dataset_path") or state.get("file_path") or state.get("local_path")}
+Dataset Name: {state.get("dataset_name")}
+==================================================""", flush=True)
 
             try:
                 result = _invoke_graph(self._graph, state, session_id)
